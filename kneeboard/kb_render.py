@@ -479,11 +479,11 @@ def _overview_panels(draw, frame, data, ctrls, geo, unit, interval):
     for c in ctrls:
         cc = G.zone_centre(c)
         near = _nearest(c, ctrls, 2)
-        row = [("%02d" % c["num"], CTRL), (c["name"][:18], INK),
+        row = [("%02d" % c["num"], CTRL), (c["name"][:26], INK),
                ("%d" % c["points"], CTRL), (_fmt_leg(leg(geo, sc, cc)), INK),
                ("   ".join("%02d: %s" % (o["num"], _fmt_leg(leg(geo, cc, G.zone_centre(o)))[:-3]) for o in near), INK)]
         if alt_short(c):
-            nm_w = _text_size(draw, c["name"][:18], font(24))[0]
+            nm_w = _text_size(draw, c["name"][:26], font(24))[0]
             draw.text(((cols[1] + nm_w + 16) * SS, (y + 3) * SS), alt_short(c), font=font(21), fill=(90, 90, 90, 255))
         for x, (t, col) in zip(cols, row):
             draw.text((x * SS, y * SS), t, font=fr if x != 96 else font(24), fill=col)
