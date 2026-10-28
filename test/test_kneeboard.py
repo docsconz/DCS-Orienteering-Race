@@ -125,6 +125,13 @@ class Stitching(unittest.TestCase):
             M.screenshot(fn, {"n": 0, "e": 0, "scale": 500})
             self.assertEqual(S.detect_pane(np.asarray(Image.open(fn).convert("RGB"))), (58, 71, 1630, 981))
 
+    def test_panel_over_the_map_is_detected(self):
+        img = np.zeros((981, 1630, 3), np.uint8)
+        img[:] = (100, 150, 100)
+        self.assertEqual(S.ui_fraction(img), 0.0)
+        img[300:700, 0:500] = (45, 62, 80)                    # a docked panel / dialog
+        self.assertGreater(S.ui_fraction(img), 0.002)
+
     def _stitch(self, scale, rounding):
         fr = G.Frame(-289500.5, 619000.5, scale)
         tiles = S.plan_tiles(1630, 981)

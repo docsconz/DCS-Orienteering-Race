@@ -49,6 +49,13 @@ def detect_pane(img):
     return x0, y0, x1 - x0 + 1, y1 - y0 + 1
 
 
+def ui_fraction(crop):
+    """Share of pixels in `crop` that are exactly the Mission Editor's panel colour.  The map itself
+    never uses that colour, so anything above ~0.2% means a dialog/panel/toolbar is on the map."""
+    c = np.asarray(crop)[..., :3]
+    return float(((c[..., 0] == 45) & (c[..., 1] == 62) & (c[..., 2] == 80)).mean())
+
+
 def plan_tiles(pane_w, pane_h, page_w=G.PAGE_W, page_h=G.PAGE_H,
                margins=DEFAULT_MARGINS, overlap=OVERLAP_PX, bleed=BLEED_PX):
     """Positions (tx, ty) of each pane's top-left in page pixels so the usable parts cover the page

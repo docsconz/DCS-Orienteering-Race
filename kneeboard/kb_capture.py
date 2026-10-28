@@ -175,10 +175,19 @@ def stable_shot(dcs, path, pane, settle=2.0, again=0.8, tries=6):
     return img
 
 
+COVERED_MSG = ("something other than the map is on screen (a dialog, a docked panel or a toolbar). "
+               "Close it, make sure only the map is showing, and run again.  Screenshot saved: %s")
+
+
 def calibrate_pane(dcs, scale, path):
-    """Detect the map pane from one screenshot."""
+    """Detect the map pane from one screenshot and check nothing is covering it."""
     dcs.screenshot(path)
-    return S.detect_pane(_load(path))
+    img = _load(path)
+    pane = S.detect_pane(img)
+    x, y, w, h = pane
+    if S.ui_fraction(img[y:y + h, x:x + w]) > 0.002:
+        raise DcsError(COVERED_MSG % os.path.abspath(path))
+    return pane
 
 
 def capture_page_tiles(dcs, page, frame, pane, tiles_dir, settle=2.0, margins=S.DEFAULT_MARGINS,
@@ -198,10 +207,12 @@ def capture_page_tiles(dcs, page, frame, pane, tiles_dir, settle=2.0, margins=S.
         raw = os.path.join(dcs.scratch, "kb_raw.png")
         img = stable_shot(dcs, raw, pane, settle=settle, again=again)
         got = S.detect_pane(img)
-        if (got[2], got[3]) != (pw, ph):
-            raise DcsError("map pane changed size (%s -> %s); keep the DCS window fixed" %
-                           (pane, got))
+        bad = os.path.abspath(os.path.join(tiles_dir, "..", "error_screenshot.png"))
         crop = img[py:py + ph, px:px + pw]
+        if (got[2], got[3]) != (pw, ph) or crop.shape[:2] != (ph, pw) or S.ui_fraction(crop) > 0.002:
+            Image.fromarray(img).save(bad)
+            raise DcsError("the map pane is not as it was at the start (was %s, now %s): %s" %
+                           (pane, got, COVERED_MSG % bad))
         Image.fromarray(crop).save(fn)
         out.append((t, crop))
         log("  tile %d/%d  focus %.1f, %.1f" % (t["k"] + 1, len(tiles), n, e))
