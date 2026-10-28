@@ -17,3 +17,7 @@ jobs:
           python3 -I test/gen_mock_zones.py examples/Orienteering_Test.miz build/mock_zones.lua
       - name: Simulated-DCS tests on Lua 5.1
         run: lua5.1 test/run_tests.lua build/race30/orienteering_race.lua build/mock_zones.lua build/dcs_test.log build/race8/orienteering_race.lua
+      - name: Kneeboard tool tests (mock dcs-sms)
+        run: |
+          pip install pillow numpy
+          python3 -I test/test_kneeboard.py
