@@ -24,46 +24,80 @@ OVERLAP_PX = 48
 BLEED_PX = 16          # tiles are planned to cover this much beyond the page edge
 
 
-def _edge(img, fixed, start, step, axis, limit, run=3):
-    """Walk from `start` along one row (axis 0) or column (axis 1) until the first position where
-    `run` consecutive pixels are all Mission Editor chrome colours; returns the last map index."""
-    pos = start
-    while 0 <= pos + step * run < limit:
-        ok = True
-        for k in range(1, run + 1):
-            q = pos + step * k
-            px = img[fixed, q] if axis == 0 else img[q, fixed]
-            if tuple(int(v) for v in px[:3]) not in UI_COLOURS:
-                ok = False
-                break
-        if ok:
-            return pos
-        pos += step
-    return pos
+def _chrome_mask(img):
+    a = np.asarray(img)[..., :3]
+    m = np.zeros(a.shape[:2], bool)
+    for c in UI_COLOURS:
+        m |= (a[..., 0] == c[0]) & (a[..., 1] == c[1]) & (a[..., 2] == c[2])
+    return m
 
 
-def _mode(vals):
-    best = max(set(vals), key=lambda v: (vals.count(v), -abs(v)))
-    return best
+MIN_BORDER = 0.98          # share of a border line that must be window chrome
+
+
+def _border_ok(img, m, x0, y0, x1, y1):
+    """The four 1-px lines just outside a candidate pane must be (almost) entirely chrome.  A map
+    line (rail, road, river) can never imitate that along a whole side."""
+    h, w = m.shape
+    if x0 < 1 or y0 < 1 or x1 >= w - 1 or y1 >= h - 1 or x1 - x0 < 100 or y1 - y0 < 100:
+        return False
+    if not (m[y0:y1 + 1, x0 - 1].mean() >= MIN_BORDER and m[y0:y1 + 1, x1 + 1].mean() >= MIN_BORDER and
+            m[y0 - 1, x0:x1 + 1].mean() >= MIN_BORDER and m[y1 + 1, x0:x1 + 1].mean() >= MIN_BORDER):
+        return False
+    # ...and the inside must be map: none of the panel blues (black is allowed - rails use it)
+    a = np.asarray(img)[y0:y1 + 1, x0:x1 + 1, :3]
+    blue = (((a[..., 0] == 45) & (a[..., 1] == 62) & (a[..., 2] == 80)) |
+            ((a[..., 0] == 26) & (a[..., 1] == 35) & (a[..., 2] == 45)))
+    return float(blue.mean()) < 0.005
 
 
 def detect_pane(img):
     """Find the map pane inside a full ME screenshot (numpy HxWx3).  -> (x, y, w, h).
 
-    Railways and other map lines are drawn in pure black, the same colour as part of the window
-    frame, so a single scan can stop on a rail line.  Instead the edge is searched along several
-    rows/columns around the centre, requiring a run of chrome-coloured pixels, and the most common
-    answer wins."""
-    h, w = img.shape[:2]
+    Railways are drawn in pure black, the same colour as part of the window frame, so scanning
+    for 'the first chrome pixel' can stop on a rail line.  Instead:
+      1. try the standard layout (left toolbar 58 px, menus 71 px, 8 px right frame, 37 px status
+         bar) and accept it if all four border lines around it are chrome along their whole length;
+      2. otherwise scan outward from the centre for the first *whole line* that is chrome.
+    """
+    m = _chrome_mask(img)
+    h, w = m.shape
+    x0, y0, x1, y1 = 58, 71, w - 9, h - 38
+    if _border_ok(img, m, x0, y0, x1, y1):
+        return x0, y0, x1 - x0 + 1, y1 - y0 + 1
+    # Fallback for another window size / UI scale.  Map lines are black, so use the colours they
+    # cannot have for the left, top and bottom borders; the right border is the black frame that
+    # runs all the way to the image edge.
     cx, cy = w // 2, h // 2
-    rows = [cy + d for d in (-300, -200, -100, 0, 100, 200, 300) if 0 <= cy + d < h]
-    cols = [cx + d for d in (-500, -375, -250, -125, 0, 125, 250, 375, 500) if 0 <= cx + d < w]
-    x0 = _mode([_edge(img, r, cx, -1, 0, w) for r in rows])
-    x1 = _mode([_edge(img, r, cx, +1, 0, w) for r in rows])
-    y0 = _mode([_edge(img, c, cy, -1, 1, h) for c in cols])
-    y1 = _mode([_edge(img, c, cy, +1, 1, h) for c in cols])
-    if x1 - x0 < 100 or y1 - y0 < 100:
-        raise ValueError("could not find the map pane - is DCS minimised or covered?")
+    a = np.asarray(img)[..., :3]
+
+    def mask(colours):
+        out = np.zeros((h, w), bool)
+        for c in colours:
+            out |= (a[..., 0] == c[0]) & (a[..., 1] == c[1]) & (a[..., 2] == c[2])
+        return out
+
+    blue = mask([(45, 62, 80), (26, 35, 45)])
+    no_black = mask([(45, 62, 80), (26, 35, 45), (0, 2, 3)])
+    ys, xs = slice(int(h * 0.2), int(h * 0.8)), slice(int(w * 0.2), int(w * 0.8))
+
+    def first(profile, start, step):
+        i = start
+        while 0 < i < len(profile) - 1 and profile[i] < MIN_BORDER:
+            i += step
+        return i
+
+    x0 = first(blue[ys, :].mean(axis=0), cx, -1) + 1
+    y0 = first(blue[:, xs].mean(axis=1), cy, -1) + 1
+    y1 = first(no_black[:, xs].mean(axis=1), cy, +1) - 1
+    col = m[ys, :].mean(axis=0)
+    ok_from = len(col)
+    while ok_from > cx and col[ok_from - 1] >= MIN_BORDER:
+        ok_from -= 1
+    x1 = ok_from - 1
+    if not _border_ok(img, m, x0, y0, x1, y1):
+        raise ValueError("could not find the map pane - is DCS minimised, covered by a dialog, "
+                         "or showing a different layout?")
     return x0, y0, x1 - x0 + 1, y1 - y0 + 1
 
 

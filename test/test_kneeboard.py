@@ -131,10 +131,21 @@ class Stitching(unittest.TestCase):
             fn = os.path.join(d, "s.png")
             M.screenshot(fn, {"n": 0, "e": 0, "scale": 500})
             img = np.asarray(Image.open(fn).convert("RGB")).copy()
-            img[:, 700:703] = 0                                   # vertical rail through the centre column
-            img[540:543, :1000] = 0                               # horizontal rail through the centre row
-            img[300:900, 600:604] = (0, 0, 0)
+            img[:, 700:710] = 0                                   # thick vertical rail, full height
+            img[540:550, :1000] = 0                               # thick horizontal rail through the centre
             self.assertEqual(S.detect_pane(img), (58, 71, 1630, 981))
+
+    def test_pane_found_by_scanning_when_layout_differs(self):
+        # a different window/UI size: the standard offsets fail, the line scan must still work
+        img = np.zeros((900, 1500, 3), np.uint8)
+        img[:] = (45, 62, 80)
+        img[100:820, 90:1400] = (100, 150, 100)                   # pane x 90..1399, y 100..819
+        img[100:820, 89] = (26, 35, 45)
+        img[100:820, 1400:] = (0, 0, 0)
+        img[820, 90:1400] = (0, 2, 3)
+        img[300:310, 90:1400] = 0                                 # rails inside the map
+        img[100:820, 700:706] = 0
+        self.assertEqual(S.detect_pane(img), (90, 100, 1310, 720))
 
     def test_panel_over_the_map_is_detected(self):
         img = np.zeros((981, 1630, 3), np.uint8)
