@@ -125,6 +125,17 @@ class Stitching(unittest.TestCase):
             M.screenshot(fn, {"n": 0, "e": 0, "scale": 500})
             self.assertEqual(S.detect_pane(np.asarray(Image.open(fn).convert("RGB"))), (58, 71, 1630, 981))
 
+    def test_black_map_lines_do_not_fool_pane_detection(self):
+        # railways are pure black on the real map - the same colour as part of the window frame
+        with tempfile.TemporaryDirectory() as d:
+            fn = os.path.join(d, "s.png")
+            M.screenshot(fn, {"n": 0, "e": 0, "scale": 500})
+            img = np.asarray(Image.open(fn).convert("RGB")).copy()
+            img[:, 700:703] = 0                                   # vertical rail through the centre column
+            img[540:543, :1000] = 0                               # horizontal rail through the centre row
+            img[300:900, 600:604] = (0, 0, 0)
+            self.assertEqual(S.detect_pane(img), (58, 71, 1630, 981))
+
     def test_panel_over_the_map_is_detected(self):
         img = np.zeros((981, 1630, 3), np.uint8)
         img[:] = (100, 150, 100)

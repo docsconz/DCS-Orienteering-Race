@@ -24,28 +24,46 @@ OVERLAP_PX = 48
 BLEED_PX = 16          # tiles are planned to cover this much beyond the page edge
 
 
+def _edge(img, fixed, start, step, axis, limit, run=3):
+    """Walk from `start` along one row (axis 0) or column (axis 1) until the first position where
+    `run` consecutive pixels are all Mission Editor chrome colours; returns the last map index."""
+    pos = start
+    while 0 <= pos + step * run < limit:
+        ok = True
+        for k in range(1, run + 1):
+            q = pos + step * k
+            px = img[fixed, q] if axis == 0 else img[q, fixed]
+            if tuple(int(v) for v in px[:3]) not in UI_COLOURS:
+                ok = False
+                break
+        if ok:
+            return pos
+        pos += step
+    return pos
+
+
+def _mode(vals):
+    best = max(set(vals), key=lambda v: (vals.count(v), -abs(v)))
+    return best
+
+
 def detect_pane(img):
-    """Find the map pane inside a full ME screenshot (numpy HxWx3).  -> (x, y, w, h)."""
+    """Find the map pane inside a full ME screenshot (numpy HxWx3).  -> (x, y, w, h).
+
+    Railways and other map lines are drawn in pure black, the same colour as part of the window
+    frame, so a single scan can stop on a rail line.  Instead the edge is searched along several
+    rows/columns around the centre, requiring a run of chrome-coloured pixels, and the most common
+    answer wins."""
     h, w = img.shape[:2]
     cx, cy = w // 2, h // 2
-
-    def is_ui(px):
-        return tuple(int(v) for v in px[:3]) in UI_COLOURS
-
-    if is_ui(img[cy, cx]):
-        raise ValueError("centre of the screenshot is Mission Editor chrome - is DCS minimised?")
-    x0 = cx
-    while x0 > 0 and not is_ui(img[cy, x0 - 1]):
-        x0 -= 1
-    x1 = cx
-    while x1 < w - 1 and not is_ui(img[cy, x1 + 1]):
-        x1 += 1
-    y0 = cy
-    while y0 > 0 and not is_ui(img[y0 - 1, cx]):
-        y0 -= 1
-    y1 = cy
-    while y1 < h - 1 and not is_ui(img[y1 + 1, cx]):
-        y1 += 1
+    rows = [cy + d for d in (-300, -200, -100, 0, 100, 200, 300) if 0 <= cy + d < h]
+    cols = [cx + d for d in (-500, -375, -250, -125, 0, 125, 250, 375, 500) if 0 <= cx + d < w]
+    x0 = _mode([_edge(img, r, cx, -1, 0, w) for r in rows])
+    x1 = _mode([_edge(img, r, cx, +1, 0, w) for r in rows])
+    y0 = _mode([_edge(img, c, cy, -1, 1, h) for c in cols])
+    y1 = _mode([_edge(img, c, cy, +1, 1, h) for c in cols])
+    if x1 - x0 < 100 or y1 - y0 < 100:
+        raise ValueError("could not find the map pane - is DCS minimised or covered?")
     return x0, y0, x1 - x0 + 1, y1 - y0 + 1
 
 
