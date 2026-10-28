@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KB = os.path.join(os.path.dirname(HERE), "kneeboard")
@@ -228,7 +227,7 @@ class Bearings(unittest.TestCase):
 
 
 class EndToEnd(unittest.TestCase):
-    def test_capture_render_pack(self):
+    def test_capture_render_package(self):
         with tempfile.TemporaryDirectory() as d:
             env = dict(os.environ, MOCK_STATE=os.path.join(d, "state.json"))
             ctl = os.path.join(d, "controls.json")
@@ -256,19 +255,19 @@ class EndToEnd(unittest.TestCase):
                 self.assertEqual(big.size[0] * 4, big.size[1] * 3)            # 3:4 as required
                 self.assertFalse((np.asarray(big.convert("RGB")) == (255, 0, 255)).all(axis=2).any())
 
-            miz = os.path.join(d, "m.miz")
-            with zipfile.ZipFile(miz, "w") as z:
-                z.writestr("mission", "x")
-                z.writestr("KNEEBOARD/IMAGES/old.png", "old")
-            r = subprocess.run(cli + ["pack", miz, out, "--out", os.path.join(d, "m_kb.miz")],
+            pkg = os.path.join(d, "pkg")
+            r = subprocess.run(cli + ["package", out, "--out", pkg], capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(sorted(os.listdir(pkg)), ["00_overview.png", "02c_Tiny_Pad_ultra.png", "INSTALL.txt"])
+            with Image.open(os.path.join(pkg, "00_overview.png")) as im:
+                self.assertEqual(im.size, (1536, 2048))
+            r = subprocess.run(cli + ["package", out, "--out", pkg], capture_output=True, text=True, env=env)
+            self.assertNotEqual(r.returncode, 0)                       # won't silently overwrite
+            r = subprocess.run(cli + ["package", out, "--out", pkg, "--size", "768x1024", "--replace"],
                                capture_output=True, text=True, env=env)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            with zipfile.ZipFile(os.path.join(d, "m_kb.miz")) as z:
-                names = z.namelist()
-            self.assertIn("KNEEBOARD/IMAGES/00_overview.png", names)
-            self.assertIn("KNEEBOARD/IMAGES/old.png", names)                  # not replaced unless asked
-            with zipfile.ZipFile(miz) as z:
-                self.assertEqual(sorted(z.namelist()), ["KNEEBOARD/IMAGES/old.png", "mission"])
+            with Image.open(os.path.join(pkg, "00_overview.png")) as im:
+                self.assertEqual(im.size, (768, 1024))
 
 
 if __name__ == "__main__":

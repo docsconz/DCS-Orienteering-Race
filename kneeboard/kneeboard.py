@@ -4,7 +4,7 @@
   python3 -I kneeboard/kneeboard.py plan    build/controls.json
   python3 -I kneeboard/kneeboard.py capture build/controls.json --cache kb_cache [--scratch]
   python3 -I kneeboard/kneeboard.py render  build/controls.json --cache kb_cache --out kb_out
-  python3 -I kneeboard/kneeboard.py pack    MyMission.miz kb_out --out MyMission_kneeboard.miz
+  python3 -I kneeboard/kneeboard.py package kb_out --out MyRace_kneeboards
 
 controls.json comes from extract.py.  See kneeboard/README.md.
 """
@@ -14,7 +14,6 @@ import os
 import shutil
 import sys
 import time
-import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -153,23 +152,41 @@ def cmd_render(a):
         print("wrote", page["id"])
 
 
-def cmd_pack(a):
+INSTALL_TXT = """Kneeboard pages for the orienteering race
+==========================================
+
+{n} pages, {size} pixels, 3:4 portrait.  They sort by file name, which is the order they appear
+on the kneeboard: 00_overview first, then each control (a = medium view, b = close, c = ultra).
+
+Bearings are MAGNETIC, distances nautical miles, contours in feet MSL.
+
+Using them (DCS reads PNG files from either place):
+  * whole mission, every aircraft: add the PNGs to the .miz under KNEEBOARD/IMAGES/
+    (a .miz is a zip file)
+  * one aircraft only: Saved Games/DCS/Kneeboard/<aircraft folder>/
+"""
+
+
+def cmd_package(a):
     src = os.path.join(a.images, a.size)
+    if not os.path.isdir(src):
+        sys.exit("no %s folder in %s - run render first" % (a.size, a.images))
     names = sorted(n for n in os.listdir(src) if n.lower().endswith(".png"))
     if not names:
         sys.exit("no PNGs in %s" % src)
-    out = a.out or (os.path.splitext(a.miz)[0] + "_kneeboard.miz")
-    if os.path.abspath(out) == os.path.abspath(a.miz):
-        sys.exit("refusing to overwrite the original mission")
-    with zipfile.ZipFile(a.miz) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            if item.filename.replace("\\", "/").startswith("KNEEBOARD/IMAGES/") and \
-                    item.filename.lower().endswith(".png") and a.replace:
-                continue
-            zout.writestr(item, zin.read(item.filename))
-        for n in names:
-            zout.write(os.path.join(src, n), "KNEEBOARD/IMAGES/" + n)
-    print("wrote %s with %d kneeboard pages (original left untouched)" % (out, len(names)))
+    out = a.out
+    if os.path.isdir(out):
+        old = [n for n in os.listdir(out) if n.lower().endswith(".png")]
+        if old and not a.replace:
+            sys.exit("%s already holds %d PNGs - use --replace to overwrite them" % (out, len(old)))
+        for n in old:
+            os.remove(os.path.join(out, n))
+    os.makedirs(out, exist_ok=True)
+    for n in names:
+        shutil.copyfile(os.path.join(src, n), os.path.join(out, n))
+    with open(os.path.join(out, "INSTALL.txt"), "w") as f:
+        f.write(INSTALL_TXT.format(n=len(names), size=a.size))
+    print("wrote %d pages (%s) to %s" % (len(names), a.size, out))
 
 
 def main(argv=None):
@@ -214,13 +231,12 @@ def main(argv=None):
     p.add_argument("--only")
     p.set_defaults(fn=cmd_render)
 
-    p = sub.add_parser("pack", help="copy the pages into KNEEBOARD/IMAGES of a COPY of the .miz")
-    p.add_argument("miz")
+    p = sub.add_parser("package", help="copy the finished pages into one tidy folder")
     p.add_argument("images", help="the --out folder of render")
+    p.add_argument("--out", default="kb_package")
     p.add_argument("--size", default="1536x2048", choices=["1536x2048", "768x1024"])
-    p.add_argument("--out")
-    p.add_argument("--replace", action="store_true", help="drop existing KNEEBOARD/IMAGES pngs first")
-    p.set_defaults(fn=cmd_pack)
+    p.add_argument("--replace", action="store_true", help="overwrite PNGs already in the folder")
+    p.set_defaults(fn=cmd_package)
 
     a = ap.parse_args(argv)
     a.fn(a)

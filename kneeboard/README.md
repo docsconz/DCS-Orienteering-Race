@@ -31,7 +31,7 @@ python3 -I kneeboard/kneeboard.py plan    build/controls.json
 # open MyMission.miz in the Mission Editor, SAVE it, then:
 python3 -I kneeboard/kneeboard.py capture build/controls.json --cache kb_cache --scratch
 python3 -I kneeboard/kneeboard.py render  build/controls.json --cache kb_cache --out kb_out
-python3 -I kneeboard/kneeboard.py pack    MyMission.miz kb_out --out MyMission_kneeboard.miz
+python3 -I kneeboard/kneeboard.py package kb_out --out MyRace_kneeboards
 ```
 
 * `capture` is the only step that needs DCS. It first reads the declination and lat/lon **while the
@@ -44,9 +44,10 @@ python3 -I kneeboard/kneeboard.py pack    MyMission.miz kb_out --out MyMission_k
   `--contour-ft 40` sets the base interval; it is coarsened automatically on steep pages so lines stay
   at least ~14 px apart. Index lines (every 5th) are labelled in feet MSL. `--no-spokes` removes the
   START→control lines.
-* `pack` writes a **copy** of the .miz with the pages in `KNEEBOARD/IMAGES/` (all aircraft show them).
-  It never touches the original. `--size 768x1024` packs the smaller copies. DCS degrades oversized
-  images, so check which size looks better in the cockpit.
+* `package` copies the finished pages into one clean folder (`--out`, default `kb_package`) with an
+  `INSTALL.txt`. It writes nothing into your mission and never overwrites existing PNGs unless you pass
+  `--replace`. `--size 768x1024` packages the smaller copies. DCS degrades oversized images, so check
+  which size looks better in the cockpit. (A zip option can be added later.)
 
 ## How it works (measured on a real Mission Editor)
 
@@ -68,7 +69,7 @@ python3 -I kneeboard/kneeboard.py pack    MyMission.miz kb_out --out MyMission_k
 `python3 -I test/test_kneeboard.py` runs everything against `kneeboard/mock_dcs_sms.py`, a stand-in
 `dcs-sms` that serves a synthetic world: stitched pages are compared pixel-for-pixel with the same world
 sampled directly (including a camera that rounds to whole metres), contours against a cone of known
-size, bearings against a fake projection with 5° convergence, and the whole capture → render → pack path.
+size, bearings against a fake projection with 5° convergence, and the whole capture → render → package path.
 
 ## Not yet verified in real DCS
 
