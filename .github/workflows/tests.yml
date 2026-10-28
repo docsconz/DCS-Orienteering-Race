@@ -1,0 +1,19 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.1 (the version DCS embeds)
+        run: sudo apt-get update && sudo apt-get install -y lua5.1
+      - name: Tour solver tests
+        run: python3 -I test/test_tour.py
+      - name: Generate scripts from the sample mission
+        run: |
+          mkdir -p build
+          python3 -I extract.py examples/Orienteering_Test.miz --out build/race30 --penalty 10 --race-minutes 30
+          python3 -I extract.py examples/Orienteering_Test.miz --out build/race8 --penalty 10 --race-minutes 8
+          python3 -I test/gen_mock_zones.py examples/Orienteering_Test.miz build/mock_zones.lua
+      - name: Simulated-DCS tests on Lua 5.1
+        run: lua5.1 test/run_tests.lua build/race30/orienteering_race.lua build/mock_zones.lua build/dcs_test.log build/race8/orienteering_race.lua

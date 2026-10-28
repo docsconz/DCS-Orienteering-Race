@@ -1,0 +1,14 @@
+# generated output and race data
+build/
+out/
+*.log
+results.json
+controls.json
+# python / editors
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+# keep the sample mission and its generated script; real event missions stay local
+*.miz
+!examples/*.miz
