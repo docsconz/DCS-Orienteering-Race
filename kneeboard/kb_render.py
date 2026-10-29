@@ -21,7 +21,7 @@ CTRL_FILL = (205, 0, 125, 55)
 START = (0, 80, 210, 255)
 START_FILL = (0, 80, 210, 45)
 CONTOUR = (125, 72, 20, 255)
-HALO = (255, 255, 255, 190)
+HALO = (255, 255, 255, 150)
 
 _FONTS = {}
 
@@ -172,11 +172,8 @@ def _overlaps(r, taken):
     return any(not (r[2] <= t[0] or r[0] >= t[2] or r[3] <= t[1] or r[1] >= t[3]) for t in taken)
 
 
-def _place(draw, anchor, text, f, taken, bounds, gap=10, **kw):
-    """Draw a label near `anchor`, trying 8 positions around it; avoids `taken` and the page edge."""
-    w, h = _text_size(draw, text, f)
-    pad = kw.get("pad", 7)
-    W, H = w + 2 * pad, h + 2 * pad
+def _place_box(anchor, W, H, taken, bounds, gap=10):
+    """Choose the top-left for a W x H box near `anchor` (8 positions tried); avoids `taken`."""
     ax, ay = anchor
     cands = [(ax + gap, ay - H - gap / 2), (ax + gap, ay + gap / 2), (ax - W - gap, ay - H - gap / 2),
              (ax - W - gap, ay + gap / 2), (ax - W / 2, ay - H - gap), (ax - W / 2, ay + gap),
@@ -189,12 +186,70 @@ def _place(draw, anchor, text, f, taken, bounds, gap=10, **kw):
             chosen = (cx, cy)
             break
     if chosen is None:
-        cx = min(max(cands[0][0], x0), x1 - W)
-        cy = min(max(cands[0][1], y0), y1 - H)
-        chosen = (cx, cy)
-    rect = _label(draw, chosen, text, f, **kw)
-    taken.append(rect)
-    return rect
+        chosen = (min(max(cands[0][0], x0), x1 - W), min(max(cands[0][1], y0), y1 - H))
+    taken.append((chosen[0], chosen[1], chosen[0] + W, chosen[1] + H))
+    return chosen
+
+
+def _place(draw, anchor, text, f, taken, bounds, gap=10, **kw):
+    """Draw a label near `anchor`, trying 8 positions around it; avoids `taken` and the page edge."""
+    w, h = _text_size(draw, text, f)
+    pad = kw.get("pad", 7)
+    x, y = _place_box(anchor, w + 2 * pad, h + 2 * pad, taken, bounds, gap)
+    return _label(draw, (x, y), text, f, **kw)
+
+
+def _centred_text(draw, cx, cy, text, f, fill):
+    b = draw.textbbox((0, 0), text, font=f)
+    draw.text((cx * SS - (b[0] + b[2]) / 2, cy * SS - (b[1] + b[3]) / 2), text, font=f, fill=fill)
+
+
+BADGE_FILL = (255, 255, 255, 246)
+
+
+def draw_num_circle(draw, cx, cy, num, f, d, colour=CTRL):
+    """Control number inside a circle (centre cx, cy; diameter d)."""
+    draw.ellipse([(cx - d / 2) * SS, (cy - d / 2) * SS, (cx + d / 2) * SS, (cy + d / 2) * SS],
+                 fill=BADGE_FILL, outline=colour, width=int(3 * SS))
+    _centred_text(draw, cx, cy, "%02d" % num, f, colour)
+
+
+def draw_pts_box(draw, x, cy, text, f, w, h, colour=CTRL):
+    """Point value inside a square-cornered rectangle (left edge x, centre y)."""
+    draw.rectangle([x * SS, (cy - h / 2) * SS, (x + w) * SS, (cy + h / 2) * SS],
+                   fill=BADGE_FILL, outline=colour, width=int(3 * SS))
+    _centred_text(draw, x + w / 2, cy, text, f, INK)
+
+
+def _badge_layout(draw, num, pts, f, name=None, fn=None, colour=CTRL):
+    """A control marker: (circle with number)(rectangle with points)[ name ].  -> (W, H, paint(x, y))."""
+    tw, th = _text_size(draw, "00", f)
+    d = max(tw, th) + 16
+    pw = _text_size(draw, str(pts), f)[0] + 22
+    h = d - 6
+    gap = 6
+    nw = 0
+    if name:
+        nw = _text_size(draw, name, fn)[0] + 20 + gap
+    W = d + gap + pw + nw
+
+    def paint(x, y):
+        cy = y + d / 2
+        draw_num_circle(draw, x + d / 2, cy, num, f, d, colour)
+        draw_pts_box(draw, x + d + gap, cy, str(pts), f, pw, h, colour)
+        if name:
+            nx = x + d + gap + pw + gap
+            nh = _text_size(draw, name, fn)[1] + 14
+            draw.rounded_rectangle([nx * SS, (cy - nh / 2) * SS, (nx + nw - gap) * SS, (cy + nh / 2) * SS],
+                                   radius=6 * SS, fill=PANEL)
+            _centred_text(draw, nx + (nw - gap) / 2, cy, name, fn, colour)
+    return W, d, paint
+
+
+def _place_badge(draw, anchor, taken, bounds, gap, **kw):
+    W, H, paint = _badge_layout(draw, **kw)
+    x, y = _place_box(anchor, W, H, taken, bounds, gap)
+    paint(x, y)
 
 
 def _zone_px(z, frame):
@@ -247,9 +302,9 @@ def draw_contours(ov, draw, z, spec, frame, interval_ft):
         px = [(x_off + p[0] * sx, y_off + p[1] * sx) for p in ln["pts"]]
         if len(px) < 2:
             continue
-        w = 3.2 if ln["index"] else 1.5
+        w = 2.2 if ln["index"] else 1.0
         q = [_s(p) for p in px]
-        draw.line(q, fill=HALO, width=int((w + 2.5) * SS), joint="curve")
+        draw.line(q, fill=HALO, width=int((w + 1.6) * SS), joint="curve")
         draw.line(q, fill=CONTOUR, width=int(w * SS), joint="curve")
         if ln["index"]:
             seg = np.hypot(*np.diff(np.array(px), axis=0).T)
@@ -367,7 +422,9 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
         sx, sy = frame.to_px(*sc)
         for c in ctrls:
             cx, cy = frame.to_px(*G.zone_centre(c))
-            draw.line([(sx * SS, sy * SS), (cx * SS, cy * SS)], fill=(40, 40, 40, 130), width=int(2 * SS))
+            ln = [(sx * SS, sy * SS), (cx * SS, cy * SS)]
+            draw.line(ln, fill=(0, 0, 0, 110), width=int(5 * SS))
+            draw.line(ln, fill=(255, 255, 255, 235), width=int(2.2 * SS))
 
     # --- zones
     big = 16 if kind == "overview" else 0
@@ -389,13 +446,12 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
         if not (-40 < pos[0] < W + 40 and -40 < pos[1] < H + 40):
             continue
         if kind == "overview":
-            _place(draw, pos, "%02d · %d" % (c["num"], c["points"]), fl, taken, bounds,
-                   gap=big + 6, fill=CTRL, border=CTRL)
+            _place_badge(draw, pos, taken, bounds, big, num=c["num"], pts=c["points"], f=fl)
         elif c is focus:
             continue                      # described in the header
         else:
-            _place(draw, pos, "%02d %s · %d" % (c["num"], c["name"], c["points"]), fm, taken, bounds,
-                   gap=10, fill=(150, 40, 110, 255))
+            _place_badge(draw, pos, taken, bounds, 10, num=c["num"], pts=c["points"], f=fm,
+                         name=c["name"], fn=font(24, True), colour=(150, 40, 110, 255))
     spos = frame.to_px(*sc)
     if -40 < spos[0] < W + 40 and -40 < spos[1] < H + 40:
         _place(draw, spos, "START", fl, taken, bounds, gap=big + 6, fill=START, border=START)
@@ -407,9 +463,9 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
         _control_header(draw, frame, page, data, focus, ctrls, geo, unit)
         # the focus control's own label near its zone (points are the thing a pilot needs)
         pos = frame.to_px(*G.zone_centre(focus))
-        _place(draw, pos, "%02d · %d pts" % (focus["num"], focus["points"]), fl, taken,
-               (14, 210, W - 14, H - 130), gap=max(26, (G.zone_size(focus) / frame.mpp) / 2 + 12),
-               fill=CTRL, border=CTRL)
+        _place_badge(draw, pos, taken, (14, 210, W - 14, H - 130),
+                     max(26, (G.zone_size(focus) / frame.mpp) / 2 + 12),
+                     num=focus["num"], pts=focus["points"], f=fl)
 
     # --- footer: scale bar, north arrows, notes
     draw_scale_bar(draw, frame, 30, H - 38 - (0 if kind != "overview" else 0))
@@ -427,29 +483,35 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
 def _control_header(draw, frame, page, data, c, ctrls, geo, unit):
     W = frame.w
     cc = G.zone_centre(c)
-    lines = []
     alt = alt_text(c)
-    lines.append(("%02d  %s" % (c["num"], c["name"]), font(54, True), INK))
-    sub = "%d pts" % c["points"]
+    ft, fs, fl = font(54, True), font(30, True), font(26)
+    D = 66                                                   # number circle diameter
+    pts_txt = "%d pts" % c["points"]
+    rest = ""
     if alt:
-        sub += "   •   altitude %s" % alt
-    sub += "   •   %s view" % page["kind"]
-    lines.append((sub, font(30, True), CTRL))
+        rest += "altitude %s   \u2022   " % alt
+    rest += "%s view" % page["kind"]
     back = leg(geo, cc, G.zone_centre(data["start"]))
     parts = ["to START %s" % _fmt_leg(back)]
-    near = _nearest(c, ctrls, 2)
-    for o in near:
+    for o in _nearest(c, ctrls, 2):
         parts.append("%02d %s" % (o["num"], _fmt_leg(leg(geo, cc, G.zone_centre(o)))))
-    lines.append(("   •   ".join(parts), font(26), INK))
-    y = 14
-    hts = [_text_size(draw, t, f)[1] for t, f, _ in lines]
-    total = sum(hts) + 12 * (len(lines) - 1) + 28
+    legs = "   \u2022   ".join(parts)
+    h_sub = _text_size(draw, pts_txt, fs)[1] + 16
+    h_leg = _text_size(draw, legs, fl)[1]
+    total = D + 12 + h_sub + 12 + h_leg + 28
     draw.rounded_rectangle([14 * SS, 14 * SS, (W - 14) * SS, (14 + total) * SS], radius=10 * SS, fill=PANEL)
     y = 28
-    for (t, f, col), h in zip(lines, hts):
-        b = draw.textbbox((0, 0), t, font=f)
-        draw.text((30 * SS - b[0], y * SS - b[1]), t, font=f, fill=col)
-        y += h + 12
+    draw_num_circle(draw, 30 + D / 2, y + D / 2, c["num"], font(34, True), D)
+    b = draw.textbbox((0, 0), c["name"], font=ft)
+    draw.text(((30 + D + 18) * SS - b[0], (y + D / 2) * SS - (b[1] + b[3]) / 2), c["name"], font=ft, fill=INK)
+    y += D + 12
+    bw = _text_size(draw, pts_txt, fs)[0] + 24
+    draw_pts_box(draw, 30, y + h_sub / 2, pts_txt, fs, bw, h_sub)
+    b = draw.textbbox((0, 0), rest, font=fs)
+    draw.text(((30 + bw + 18) * SS - b[0], (y + h_sub / 2) * SS - (b[1] + b[3]) / 2), rest, font=fs, fill=CTRL)
+    y += h_sub + 12
+    b = draw.textbbox((0, 0), legs, font=fl)
+    draw.text((30 * SS - b[0], y * SS - b[1]), legs, font=fl, fill=INK)
 
 
 def _overview_panels(draw, frame, data, ctrls, geo, unit, interval):
@@ -464,6 +526,12 @@ def _overview_panels(draw, frame, data, ctrls, geo, unit, interval):
     else:
         sub = "START + %d controls" % len(ctrls)
     draw.text((34 * SS, 96 * SS), sub, font=font(28), fill=INK)
+    fk = font(22, True)                                       # key: what the two marker shapes mean
+    kx = 470
+    draw_num_circle(draw, kx + 17, 52, 1, fk, 34)
+    draw.text(((kx + 42) * SS, 40 * SS), "control no.", font=font(24), fill=INK)
+    draw_pts_box(draw, kx + 190, 52, "24", fk, 50, 30)
+    draw.text(((kx + 250) * SS, 40 * SS), "points", font=font(24), fill=INK)
     # table
     n = len(ctrls)
     y0 = H - P.overview_table_px(n)
@@ -479,8 +547,10 @@ def _overview_panels(draw, frame, data, ctrls, geo, unit, interval):
     for c in ctrls:
         cc = G.zone_centre(c)
         near = _nearest(c, ctrls, 2)
-        row = [("%02d" % c["num"], CTRL), (c["name"][:26], INK),
-               ("%d" % c["points"], CTRL), (_fmt_leg(leg(geo, sc, cc)), INK),
+        draw_num_circle(draw, cols[0] + 15, y + 17, c["num"], font(19, True), 38)
+        draw_pts_box(draw, cols[2] - 8, y + 17, "%d" % c["points"], font(24, True), 62, 34)
+        row = [("", CTRL), (c["name"][:26], INK),
+               ("", CTRL), (_fmt_leg(leg(geo, sc, cc)), INK),
                ("   ".join("%02d: %s" % (o["num"], _fmt_leg(leg(geo, cc, G.zone_centre(o)))[:-3]) for o in near), INK)]
         if alt_short(c):
             nm_w = _text_size(draw, c["name"][:26], font(24))[0]

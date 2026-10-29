@@ -79,7 +79,7 @@ def chain(segs, eps=1e-3):
     return lines
 
 
-def pick_interval_ft(z_m, cell_px, base_ft=40.0, min_spacing_px=14.0):
+def pick_interval_ft(z_m, cell_px, base_ft=40.0, min_spacing_px=10.0):
     """Start from the wanted interval and coarsen while contours would be tighter than
     `min_spacing_px` on the page (judged from the 75th percentile slope of the land).
     `cell_px` = page pixels per height-grid cell."""

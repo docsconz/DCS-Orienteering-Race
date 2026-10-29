@@ -41,7 +41,7 @@ python3 -I kneeboard/kneeboard.py package kb_out --out MyRace_kneeboards
 * It is resumable: tiles and finished pages in `--cache` are reused (`--recapture` forces a redo,
   `--only id1,id2` limits it).
 * `render` is offline and takes seconds, so styling can be redone freely from the cache.
-  `--contour-ft 40` sets the base interval; it is coarsened automatically on steep pages so lines stay
+  `--contour-ft 20` sets the base interval; it is coarsened automatically on steep pages so lines stay
   at least ~14 px apart. Index lines (every 5th) are labelled in feet MSL. `--no-spokes` removes the
   START→control lines.
 * `package` copies the finished pages into one clean folder (`--out`, default `kb_package`) with an
