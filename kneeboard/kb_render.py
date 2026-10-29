@@ -20,8 +20,10 @@ CTRL = (205, 0, 125, 255)
 CTRL_FILL = (205, 0, 125, 55)
 START = (0, 80, 210, 255)
 START_FILL = (0, 80, 210, 45)
-CONTOUR = (125, 72, 20, 255)
-HALO = (255, 255, 255, 150)
+CONTOUR = (125, 72, 20, 255)                # elevation numbers
+CONTOUR_ALPHA = 0.6                         # lines are 40% more transparent than the numbers
+CONTOUR_LINE = (125, 72, 20, int(255 * CONTOUR_ALPHA))
+HALO = (255, 255, 255, int(150 * CONTOUR_ALPHA))
 
 _FONTS = {}
 
@@ -357,7 +359,7 @@ def draw_contours(ov, draw, z, spec, frame, interval_ft, water=None):
         for run in _runs_on_land(px, water):
             q = [_s(p) for p in run]
             draw.line(q, fill=HALO, width=int((w + 1.6) * SS), joint="curve")
-            draw.line(q, fill=CONTOUR, width=int(w * SS), joint="curve")
+            draw.line(q, fill=CONTOUR_LINE, width=int(w * SS), joint="curve")
         if ln["index"]:
             seg = np.hypot(*np.diff(np.array(px), axis=0).T)
             total = float(seg.sum())
