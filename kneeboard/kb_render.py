@@ -413,9 +413,13 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
         draw_contours(ov, draw, z, spec, frame, interval)
 
     top_res = P.HEADER_PX if kind == "overview" else 0
-    bot_res = P.overview_table_px(len(ctrls)) if kind == "overview" else 0
-    bounds = (14, top_res + 14 if kind == "overview" else 210, W - 14, H - bot_res - 110)
+    bounds = (14, top_res + 14 if kind == "overview" else 210, W - 14, H - 110)
     taken = []
+    table = None
+    if kind == "overview":
+        table = _table_geometry(draw, ctrls)
+        table["rect"] = _pick_table_corner(base, frame, table, [sc] + [G.zone_centre(c) for c in ctrls])
+        taken.append(table["rect"])
 
     # --- spokes (overview): START -> each control
     if kind == "overview" and spokes:
@@ -458,7 +462,7 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
 
     # --- header / table
     if kind == "overview":
-        _overview_panels(draw, frame, data, ctrls, geo, unit, interval)
+        _overview_panels(draw, frame, data, ctrls, geo, unit, interval, table)
     else:
         _control_header(draw, frame, page, data, focus, ctrls, geo, unit)
         # the focus control's own label near its zone (points are the thing a pilot needs)
@@ -514,7 +518,47 @@ def _control_header(draw, frame, page, data, c, ctrls, geo, unit):
     draw.text((30 * SS - b[0], y * SS - b[1]), legs, font=fl, fill=INK)
 
 
-def _overview_panels(draw, frame, data, ctrls, geo, unit, interval):
+def _table_geometry(draw, ctrls):
+    """Column positions and size of the compact overview table (no placement yet)."""
+    fn, fa, fh = font(24), font(21), font(24, True)
+    name_w = 0
+    for c in ctrls:
+        w = _text_size(draw, c["name"][:26], fn)[0]
+        if alt_short(c):
+            w += 16 + _text_size(draw, alt_short(c), fa)[0]
+        name_w = max(name_w, w)
+    x_name = 56
+    x_pts = x_name + name_w + 18
+    x_brg = x_pts + 62 + 16
+    brg_w = max(_text_size(draw, "000\u00b0M 00.0 nm", font(26))[0], _text_size(draw, "From START", fh)[0])
+    w = x_brg + brg_w + 18
+    h = 12 + P.ROW_PX * (len(ctrls) + 1) + 10
+    return {"x_name": x_name, "x_pts": x_pts, "x_brg": x_brg, "w": int(w), "h": int(h)}
+
+
+def _pick_table_corner(base, frame, t, pts):
+    """Corner of the page where the table hides the least: no controls, and mostly sea."""
+    W, H = frame.w, frame.h
+    w, h = t["w"], t["h"]
+    m = 14
+    top = P.HEADER_PX + 4
+    cands = [(m, H - 100 - h), (W - m - w, H - m - h), (m, top), (W - m - w, 196)]
+    best, best_score = None, None
+    px = [frame.to_px(*p) for p in pts]
+    for i, (x, y) in enumerate(cands):
+        r = (x, y, x + w, y + h)
+        if r[1] < top - 4 or r[0] < 0:
+            continue
+        hits = sum(1 for (a, b) in px if r[0] - 70 <= a <= r[2] + 70 and r[1] - 40 <= b <= r[3] + 40)
+        crop = base[int(r[1]):int(r[3]), int(r[0]):int(r[2])].astype(int)
+        sea = float(((crop[..., 2] > crop[..., 0] + 30) & (crop[..., 2] > crop[..., 1] - 5)).mean()) if crop.size else 0
+        score = hits * 1000 + (1 - sea) * 100 + i
+        if best_score is None or score < best_score:
+            best, best_score = r, score
+    return best
+
+
+def _overview_panels(draw, frame, data, ctrls, geo, unit, interval, t):
     W, H = frame.w, frame.h
     # header
     draw.rounded_rectangle([14 * SS, 14 * SS, (W - 190) * SS, (P.HEADER_PX - 20) * SS], radius=10 * SS, fill=PANEL)
@@ -533,28 +577,24 @@ def _overview_panels(draw, frame, data, ctrls, geo, unit, interval):
     draw_pts_box(draw, kx + 190, 52, "24", fk, 50, 30)
     draw.text(((kx + 250) * SS, 40 * SS), "points", font=font(24), fill=INK)
     # table
-    n = len(ctrls)
-    y0 = H - P.overview_table_px(n)
-    draw.rounded_rectangle([14 * SS, (y0 - 6) * SS, (W - 14) * SS, (H - 92) * SS], radius=10 * SS, fill=(255, 255, 255, 238))
-    fh, fr = font(24, True), font(26)
-    cols = [34, 96, 530, 615, 935]
-    heads = ["#", "Control", "Pts", "From START (%s, nm)" % ("°M" if unit == "M" else "°G"), "Nearest controls"]
-    y = y0 + 4
-    for x, t in zip(cols, heads):
-        draw.text((x * SS, y * SS), t, font=fh, fill=(80, 80, 80, 255))
+    x0, y0, x1, y1 = t["rect"]
+    draw.rounded_rectangle([x0 * SS, y0 * SS, x1 * SS, y1 * SS], radius=10 * SS, fill=(255, 255, 255, 238))
+    fh, fn, fr = font(24, True), font(24), font(26)
+    y = y0 + 12
+    grey = (80, 80, 80, 255)
+    draw.text(((x0 + t["x_name"]) * SS, y * SS), "Control", font=fh, fill=grey)
+    draw.text(((x0 + t["x_pts"] - 6) * SS, y * SS), "Pts", font=fh, fill=grey)
+    draw.text(((x0 + t["x_brg"]) * SS, y * SS), "From START", font=fh, fill=grey)
     y += P.ROW_PX
     sc = G.zone_centre(data["start"])
     for c in ctrls:
         cc = G.zone_centre(c)
-        near = _nearest(c, ctrls, 2)
-        draw_num_circle(draw, cols[0] + 15, y + 17, c["num"], font(19, True), 38)
-        draw_pts_box(draw, cols[2] - 8, y + 17, "%d" % c["points"], font(24, True), 62, 34)
-        row = [("", CTRL), (c["name"][:26], INK),
-               ("", CTRL), (_fmt_leg(leg(geo, sc, cc)), INK),
-               ("   ".join("%02d: %s" % (o["num"], _fmt_leg(leg(geo, cc, G.zone_centre(o)))[:-3]) for o in near), INK)]
+        draw_num_circle(draw, x0 + 30, y + 17, c["num"], font(19, True), 38)
+        draw.text(((x0 + t["x_name"]) * SS, (y + 3) * SS), c["name"][:26], font=fn, fill=INK)
         if alt_short(c):
-            nm_w = _text_size(draw, c["name"][:26], font(24))[0]
-            draw.text(((cols[1] + nm_w + 16) * SS, (y + 3) * SS), alt_short(c), font=font(21), fill=(90, 90, 90, 255))
-        for x, (t, col) in zip(cols, row):
-            draw.text((x * SS, y * SS), t, font=fr if x != 96 else font(24), fill=col)
+            nm_w = _text_size(draw, c["name"][:26], fn)[0]
+            draw.text(((x0 + t["x_name"] + nm_w + 16) * SS, (y + 6) * SS), alt_short(c), font=font(21),
+                      fill=(90, 90, 90, 255))
+        draw_pts_box(draw, x0 + t["x_pts"] - 8, y + 17, "%d" % c["points"], font(24, True), 62, 34)
+        draw.text(((x0 + t["x_brg"]) * SS, (y + 1) * SS), _fmt_leg(leg(geo, sc, cc)), font=fr, fill=INK)
         y += P.ROW_PX

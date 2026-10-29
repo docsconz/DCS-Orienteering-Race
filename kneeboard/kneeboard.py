@@ -226,7 +226,7 @@ def main(argv=None):
     p.add_argument("controls")
     p.add_argument("--cache", default="kb_cache")
     p.add_argument("--out", default="kb_out")
-    p.add_argument("--contour-ft", type=float, default=20.0)
+    p.add_argument("--contour-ft", type=float, default=10.0)
     p.add_argument("--no-spokes", action="store_true", help="overview: no START-to-control lines")
     p.add_argument("--only")
     p.set_defaults(fn=cmd_render)

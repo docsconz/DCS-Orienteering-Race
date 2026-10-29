@@ -5,7 +5,7 @@ import kb_geom as G
 
 HEADER_PX = 170        # reserved at the top of the overview page
 ROW_PX = 40            # overview table row height
-TABLE_PAD_PX = 110     # table title + footer band
+FOOTER_PX = 110        # kept clear at the bottom of the overview (scale bar)
 
 
 class PageOptions:
@@ -19,10 +19,6 @@ class PageOptions:
         self.ultra_below_m = ultra_below_m
         self.overview_margin = overview_margin
         self.min_overview_m = min_overview_m
-
-
-def overview_table_px(n_controls):
-    return TABLE_PAD_PX + ROW_PX * (n_controls + 1)
 
 
 def _page(pid, kind, title, ctrl, cn, ce, width_m, size_m=None):
@@ -48,7 +44,7 @@ def build_pages(data, opts=None):
     h_m = max(maxs_n - mins_n, opts.min_overview_m / 2.0)
     w_m = max(maxs_e - mins_e, opts.min_overview_m / 2.0)
     top = HEADER_PX
-    bottom = overview_table_px(len(ctrls))
+    bottom = FOOTER_PX
     avail_h = G.PAGE_H - top - bottom
     k = 1.0 + 2.0 * opts.overview_margin
     need_mpp = max(w_m * k / G.PAGE_W, h_m * k / float(avail_h))

@@ -94,7 +94,7 @@ class Pages(unittest.TestCase):
     def test_overview_contains_everything(self):
         page = P.build_pages(DATA)[0]
         f = G.Frame(page["cn"], page["ce"], page["scale"])
-        top, bot = P.HEADER_PX, P.overview_table_px(3)
+        top, bot = P.HEADER_PX, P.FOOTER_PX
         for z in [DATA["start"]] + DATA["controls"]:
             x, y = f.to_px(*G.zone_centre(z))
             self.assertTrue(0 < x < G.PAGE_W and top < y < G.PAGE_H - bot, (x, y))
