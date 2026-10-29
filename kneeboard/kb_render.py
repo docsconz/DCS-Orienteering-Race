@@ -66,6 +66,22 @@ class GeoTable:
     def __bool__(self):
         return bool(self.rows)
 
+    def north_pair(self, n, e):
+        """(row at n,e; row 1000 m further north).  If the page centre was not fetched (the plan
+        changed after geo.json was written), use the nearest fetched point that has such a pair:
+        declination and grid convergence change by well under a degree over tens of km."""
+        a, b = self.get(n, e), self.get(n + 1000.0, e)
+        if a and b:
+            return a, b
+        best = None
+        for r in self.rows.values():
+            q = self.get(r["n"] + 1000.0, r["e"])
+            if q:
+                d = (r["n"] - n) ** 2 + (r["e"] - e) ** 2
+                if best is None or d < best[0]:
+                    best = (d, r, q)
+        return (best[1], best[2]) if best else (None, None)
+
 
 def required_points(data, pages):
     pts = [G.zone_centre(data["start"])] + [G.zone_centre(c) for c in data["controls"]]
@@ -93,8 +109,7 @@ def leg(geo, a, b):
 
 def mag_north_angle(geo, page):
     """Degrees clockwise from page-up at which MAGNETIC north points (None if no geo)."""
-    a = geo.get(page["cn"], page["ce"]) if geo else None
-    b = geo.get(page["cn"] + 1000.0, page["ce"]) if geo else None
+    a, b = geo.north_pair(page["cn"], page["ce"]) if geo else (None, None)
     if not (a and b):
         return None
     gamma = G.true_azimuth_deg(a["lat"], a["lon"], b["lat"], b["lon"])   # true azimuth of grid north
@@ -416,10 +431,6 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
     bounds = (14, top_res + 14 if kind == "overview" else 210, W - 14, H - 110)
     taken = []
     table = None
-    if kind == "overview":
-        table = _table_geometry(draw, ctrls)
-        table["rect"] = _pick_table_corner(base, frame, table, [sc] + [G.zone_centre(c) for c in ctrls])
-        taken.append(table["rect"])
 
     # --- spokes (overview): START -> each control
     if kind == "overview" and spokes:
@@ -432,6 +443,7 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
 
     # --- zones
     big = 16 if kind == "overview" else 0
+    markers = []
     for c in ctrls:
         is_focus = (c is focus)
         col = CTRL
@@ -439,8 +451,10 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
         if not is_focus and kind != "overview":
             col = (150, 40, 110, 255)
         draw_cross(draw, pos, col)
+        markers.append((c, ext))
     spos, sext = draw_zone(draw, start, frame, START, START_FILL, 4, min_marker=big)
     draw_cross(draw, spos, START)
+    markers.append((start, sext))
 
     # --- labels
     fl = font(34, bold=True)
@@ -462,6 +476,9 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
 
     # --- header / table
     if kind == "overview":
+        table = _table_geometry(draw, ctrls)
+        table["rect"] = _pick_table_spot(base, frame, table, taken,
+                                         [(frame.to_px(*G.zone_centre(c)), ext_px) for c, ext_px in markers])
         _overview_panels(draw, frame, data, ctrls, geo, unit, interval, table)
     else:
         _control_header(draw, frame, page, data, focus, ctrls, geo, unit)
@@ -518,44 +535,72 @@ def _control_header(draw, frame, page, data, c, ctrls, geo, unit):
     draw.text((30 * SS - b[0], y * SS - b[1]), legs, font=fl, fill=INK)
 
 
+TROW = 36                                  # overview table row height
+
+
 def _table_geometry(draw, ctrls):
     """Column positions and size of the compact overview table (no placement yet)."""
-    fn, fa, fh = font(24), font(21), font(24, True)
+    fn, fa, fh = font(22), font(19), font(22, True)
     name_w = 0
     for c in ctrls:
         w = _text_size(draw, c["name"][:26], fn)[0]
         if alt_short(c):
-            w += 16 + _text_size(draw, alt_short(c), fa)[0]
+            w += 14 + _text_size(draw, alt_short(c), fa)[0]
         name_w = max(name_w, w)
-    x_name = 56
+    x_name = 50
     x_pts = x_name + name_w + 18
-    x_brg = x_pts + 62 + 16
-    brg_w = max(_text_size(draw, "000\u00b0M 00.0 nm", font(26))[0], _text_size(draw, "From START", fh)[0])
+    x_brg = x_pts + 56 + 14
+    brg_w = max(_text_size(draw, "000\u00b0M 00.0 nm", font(24))[0], _text_size(draw, "From START", fh)[0])
     w = x_brg + brg_w + 18
-    h = 12 + P.ROW_PX * (len(ctrls) + 1) + 10
+    h = 10 + TROW * (len(ctrls) + 1) + 8
     return {"x_name": x_name, "x_pts": x_pts, "x_brg": x_brg, "w": int(w), "h": int(h)}
 
 
-def _pick_table_corner(base, frame, t, pts):
-    """Corner of the page where the table hides the least: no controls, and mostly sea."""
+def _pick_table_spot(base, frame, t, taken, markers):
+    """Place the overview table where it hides the least land, with a clear border around it.
+
+    Sea is preferred (a lost player may want the land features).  Every position on a grid is
+    tried; one is rejected if it comes within `gap` px of a control marker or label.  If nothing
+    fits, the border is relaxed step by step."""
     W, H = frame.w, frame.h
     w, h = t["w"], t["h"]
-    m = 14
-    top = P.HEADER_PX + 4
-    cands = [(m, H - 100 - h), (W - m - w, H - m - h), (m, top), (W - m - w, 196)]
-    best, best_score = None, None
-    px = [frame.to_px(*p) for p in pts]
-    for i, (x, y) in enumerate(cands):
-        r = (x, y, x + w, y + h)
-        if r[1] < top - 4 or r[0] < 0:
-            continue
-        hits = sum(1 for (a, b) in px if r[0] - 70 <= a <= r[2] + 70 and r[1] - 40 <= b <= r[3] + 40)
-        crop = base[int(r[1]):int(r[3]), int(r[0]):int(r[2])].astype(int)
-        sea = float(((crop[..., 2] > crop[..., 0] + 30) & (crop[..., 2] > crop[..., 1] - 5)).mean()) if crop.size else 0
-        score = hits * 1000 + (1 - sea) * 100 + i
-        if best_score is None or score < best_score:
-            best, best_score = r, score
-    return best
+    top = P.HEADER_PX + 6
+    avoid = [(14, H - 96, 480, H),                       # scale bar
+             (W - 200, 0, W, 200)]                       # north arrow
+    sea = ((base[..., 2].astype(int) > base[..., 0].astype(int) + 30) &
+           (base[..., 2].astype(int) > base[..., 1].astype(int) - 5))
+    ii = np.pad(sea.astype(np.int64).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+
+    def sea_frac(r):
+        x0, y0, x1, y1 = (int(round(v)) for v in r)
+        return (ii[y1, x1] - ii[y0, x1] - ii[y1, x0] + ii[y0, x0]) / float(max(1, (x1 - x0) * (y1 - y0)))
+
+    def clear(r, gap):
+        for (cx, cy), ext in markers:
+            if r[0] - gap - ext <= cx <= r[2] + gap + ext and r[1] - gap - ext <= cy <= r[3] + gap + ext:
+                return False
+        for q in list(taken) + avoid:
+            if not (r[2] + gap * 0.6 <= q[0] or r[0] - gap * 0.6 >= q[2] or
+                    r[3] + gap * 0.6 <= q[1] or r[1] - gap * 0.6 >= q[3]):
+                return False
+        return True
+
+    xs = list(range(14, int(W - 14 - w) + 1, 16)) or [14]
+    ys = list(range(int(top), int(H - 14 - h) + 1, 16)) or [int(top)]
+    for gap in (56, 40, 26, 12, 0):
+        best, best_score = None, None
+        for y in ys:
+            for x in xs:
+                r = (x, y, x + w, y + h)
+                if not clear(r, gap):
+                    continue
+                corner = min(x - 14, W - 14 - w - x) + min(y - top, H - 14 - h - y)   # tie-break: corners
+                score = (1.0 - sea_frac(r)) * 1000 + corner * 0.05
+                if best_score is None or score < best_score:
+                    best, best_score = r, score
+        if best:
+            return best
+    return (W - 14 - w, 196, W - 14, 196 + h)
 
 
 def _overview_panels(draw, frame, data, ctrls, geo, unit, interval, t):
@@ -578,23 +623,30 @@ def _overview_panels(draw, frame, data, ctrls, geo, unit, interval, t):
     draw.text(((kx + 250) * SS, 40 * SS), "points", font=font(24), fill=INK)
     # table
     x0, y0, x1, y1 = t["rect"]
-    draw.rounded_rectangle([x0 * SS, y0 * SS, x1 * SS, y1 * SS], radius=10 * SS, fill=(255, 255, 255, 238))
-    fh, fn, fr = font(24, True), font(24), font(26)
-    y = y0 + 12
+    draw.rounded_rectangle([x0 * SS, y0 * SS, x1 * SS, y1 * SS], radius=10 * SS, fill=(255, 255, 255, 240))
+    fh, fn, fr = font(22, True), font(22), font(24)
+    y = y0 + 10
     grey = (80, 80, 80, 255)
     draw.text(((x0 + t["x_name"]) * SS, y * SS), "Control", font=fh, fill=grey)
-    draw.text(((x0 + t["x_pts"] - 6) * SS, y * SS), "Pts", font=fh, fill=grey)
+    draw.text(((x0 + t["x_pts"] - 2) * SS, y * SS), "Pts", font=fh, fill=grey)
     draw.text(((x0 + t["x_brg"]) * SS, y * SS), "From START", font=fh, fill=grey)
-    y += P.ROW_PX
+    y += TROW
     sc = G.zone_centre(data["start"])
     for c in ctrls:
         cc = G.zone_centre(c)
-        draw_num_circle(draw, x0 + 30, y + 17, c["num"], font(19, True), 38)
-        draw.text(((x0 + t["x_name"]) * SS, (y + 3) * SS), c["name"][:26], font=fn, fill=INK)
+        cy = y + TROW / 2 - 1
+        draw_num_circle(draw, x0 + 28, cy, c["num"], font(17, True), 33)
+        for txt, f_, xx, col in ((c["name"][:26], fn, x0 + t["x_name"], INK),):
+            b = draw.textbbox((0, 0), txt, font=f_)
+            draw.text((xx * SS - b[0], cy * SS - (b[1] + b[3]) / 2), txt, font=f_, fill=col)
         if alt_short(c):
             nm_w = _text_size(draw, c["name"][:26], fn)[0]
-            draw.text(((x0 + t["x_name"] + nm_w + 16) * SS, (y + 6) * SS), alt_short(c), font=font(21),
-                      fill=(90, 90, 90, 255))
-        draw_pts_box(draw, x0 + t["x_pts"] - 8, y + 17, "%d" % c["points"], font(24, True), 62, 34)
-        draw.text(((x0 + t["x_brg"]) * SS, (y + 1) * SS), _fmt_leg(leg(geo, sc, cc)), font=fr, fill=INK)
-        y += P.ROW_PX
+            a_ = alt_short(c)
+            b = draw.textbbox((0, 0), a_, font=font(19))
+            draw.text(((x0 + t["x_name"] + nm_w + 14) * SS - b[0], cy * SS - (b[1] + b[3]) / 2), a_,
+                      font=font(19), fill=(90, 90, 90, 255))
+        draw_pts_box(draw, x0 + t["x_pts"] - 4, cy, "%d" % c["points"], font(22, True), 56, 30)
+        txt = _fmt_leg(leg(geo, sc, cc))
+        b = draw.textbbox((0, 0), txt, font=fr)
+        draw.text(((x0 + t["x_brg"]) * SS - b[0], cy * SS - (b[1] + b[3]) / 2), txt, font=fr, fill=INK)
+        y += TROW
