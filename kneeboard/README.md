@@ -37,10 +37,15 @@ short second capture. Then it captures, draws and packages everything into `MyRa
 `--no-airfields` to skip the second pass, `--yes` to not pause. The commands below are the same steps
 one at a time.
 
-At the very end `go` asks whether to also add the pages to the .miz (`KNEEBOARD/IMAGES/`, so every
-player gets them). Either way the pages stay in the folder. Saying yes makes a backup copy first
-(`MyRace.miz.bak`, never overwritten) and keeps everything else in the .miz; if the mission is open in
-the Mission Editor, close it without saving and reopen it. `--bake` answers yes, `--no-bake` never asks.
+At the very end, for a .miz, `go` asks two y/n questions: (1) add a **MISSION START trigger** that runs the
+race script (`DO SCRIPT FILE orienteering_race.lua`, script stored inside the .miz; uses
+`build/orienteering_race.lua`, or `--script PATH`), and (2) add the kneeboard pages (`KNEEBOARD/IMAGES/`,
+so every player gets them). Either way the pages stay in the folder. Saying yes to either makes a backup
+copy first (`MyRace.miz.bak`, never overwritten) and keeps everything else in the .miz; an existing
+trigger for the script is detected (the script inside is just refreshed). If the mission is open in the
+Mission Editor, close it without saving and reopen it. `--trigger` / `--bake` answer yes, `--no-trigger` /
+`--no-bake` never ask. The trigger format was copied from two real missions saved by the Mission Editor
+(`test/fixtures`), and the result is parsed back and checked before it replaces the .miz.
 
 ## Workflow
 

@@ -285,40 +285,6 @@ def cmd_package(a):
     print("wrote %d pages (%s) to %s" % (len(names), a.size, out))
 
 
-def bake_into_miz(miz, images_dir):
-    """Add the PNGs of `images_dir` to the .miz under KNEEBOARD/IMAGES/ (same pages as the folder).
-
-    A backup copy is made first (MyRace.miz.bak, or a numbered one if that exists); the new .miz is
-    written next to it and swapped in only when complete.  Existing entries are kept; pages with the
-    same name are replaced.  Returns (number of pages, backup path)."""
-    import zipfile
-    names = sorted(n for n in os.listdir(images_dir) if n.lower().endswith(".png"))
-    if not names:
-        raise ValueError("no PNGs in %s" % images_dir)
-    bak = miz + ".bak"
-    k = 1
-    while os.path.exists(bak):
-        k += 1
-        bak = "%s.bak%d" % (miz, k)
-    shutil.copyfile(miz, bak)
-    new = {"KNEEBOARD/IMAGES/" + n for n in names}
-    tmp = miz + ".new"
-    try:
-        with zipfile.ZipFile(miz) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                if item.filename in new:
-                    continue
-                zout.writestr(item, zin.read(item.filename))
-            for n in names:
-                zout.write(os.path.join(images_dir, n), "KNEEBOARD/IMAGES/" + n)
-        os.replace(tmp, miz)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise
-    return len(names), bak
-
-
 def yes_no(text):
     while True:
         try:
@@ -415,20 +381,58 @@ def cmd_go(a):
           "--contour-ft", str(a.contour_ft)] + (["--only", a.only] if a.only else []))
     main(["package", a.render_dir, "--out", out, "--size", a.size, "--replace"])
     print("\nThe pages are in: %s" % os.path.abspath(out))
-    if src.lower().endswith(".miz") and not a.no_bake:
-        print()
-        if a.bake or (not a.yes and yes_no("Also add these pages to %s (under KNEEBOARD/IMAGES, so every player "
-                                            "gets them)? A backup copy of the .miz is made first." % os.path.basename(src))):
-            try:
-                n, bak = bake_into_miz(src, os.path.join(out))
-                print("Added %d pages to %s.  Backup: %s" % (n, src, bak))
-                print("If the mission is open in the Mission Editor, close it without saving and reopen it.")
-            except (OSError, ValueError) as e:
-                print("Could not update the .miz (%s).  The pages in the folder are fine; copy them in yourself "
-                      "(see INSTALL.txt)." % e)
-        else:
-            print("The .miz was not changed.")
+    if src.lower().endswith(".miz"):
+        finish_miz(a, src, out, cache)
     print("\nDone.")
+
+
+def find_script(a, cache):
+    """The race script to offer to embed: --script, else build/orienteering_race.lua, else the one extract just made."""
+    cands = [a.script] if a.script else [os.path.join("build", "orienteering_race.lua"),
+                                         os.path.join(cache, "extract", "orienteering_race.lua")]
+    for c in cands:
+        if c and os.path.exists(c):
+            return os.path.abspath(c)
+    return None
+
+
+def finish_miz(a, miz, out, cache):
+    """The two optional edits to the .miz, asked as y/n (trigger first, then kneeboards), done in one pass."""
+    import miz_edit
+    script = None
+    if not a.no_trigger:
+        path = find_script(a, cache)
+        if path is None:
+            print("\n(No orienteering_race.lua found - pass --script PATH to offer the MISSION START trigger.)")
+        else:
+            print()
+            q = ("Add a MISSION START trigger to %s that runs the race script?\n   script: %s\n"
+                 "   (a backup copy of the .miz is made first)" % (os.path.basename(miz), path))
+            if a.trigger or (not a.yes and yes_no(q)):
+                script = path
+    pages = None
+    if not a.no_bake:
+        print()
+        q = ("Also add the kneeboard pages to %s (under KNEEBOARD/IMAGES, so every player gets them)?"
+             % os.path.basename(miz))
+        if a.bake or (not a.yes and yes_no(q)):
+            pages = out
+    if not script and not pages:
+        print("The .miz was not changed.")
+        return
+    try:
+        r = miz_edit.update_miz(miz, images_dir=pages, script_path=script)
+    except (OSError, ValueError, miz_edit.MizError, KeyError) as e:
+        print("Could not update the .miz (%s) - it is unchanged.  The pages in the folder are fine." % e)
+        return
+    if r["script"] == "added":
+        print("Added the MISSION START trigger and the script to %s." % miz)
+    elif r["script"] == "replaced":
+        print("The mission already had that trigger - refreshed the script inside it.")
+    if r["pages"]:
+        print("Added %d kneeboard pages to %s." % (r["pages"], miz))
+    print("Backup of the original: %s" % r["backup"])
+    print("If the mission is open in the Mission Editor, close it without saving and reopen it.")
 
 
 def main(argv=None):
@@ -504,6 +508,9 @@ def main(argv=None):
     p.add_argument("--no-airfields", action="store_true", help="skip the airfield second pass")
     p.add_argument("--bake", action="store_true", help="add the pages to the .miz without asking")
     p.add_argument("--no-bake", action="store_true", help="never offer to add the pages to the .miz")
+    p.add_argument("--trigger", action="store_true", help="add the MISSION START script trigger without asking")
+    p.add_argument("--no-trigger", action="store_true", help="never offer the MISSION START script trigger")
+    p.add_argument("--script", help="the race script to embed (default: build/orienteering_race.lua)")
     add_pages(p)
     p.set_defaults(fn=cmd_go)
 

@@ -13,6 +13,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 KB = os.path.join(os.path.dirname(HERE), "kneeboard")
 sys.path.insert(0, KB)
+sys.path.insert(0, os.path.dirname(KB))
 
 import numpy as np                                    # noqa: E402
 from PIL import Image                                 # noqa: E402
@@ -343,36 +344,100 @@ class Stale(unittest.TestCase):
             self.assertIn("02c_Tiny_Pad_ultra changed since it was last captured", r.stdout)
 
 
-class Bake(unittest.TestCase):
-    def test_pages_added_to_miz_with_backup(self):
+FIX = os.path.join(HERE, "fixtures")
+
+
+class MizEdit(unittest.TestCase):
+    """The trigger format is checked against two real missions saved by the Mission Editor that differ
+    only by this trigger (fixtures)."""
+
+    def _texts(self, name):
         import zipfile
-        import kneeboard as KBM
+        with zipfile.ZipFile(os.path.join(FIX, name)) as z:
+            return z.read("mission").decode("utf-8"), z.read("l10n/DEFAULT/mapResource").decode("utf-8")
+
+    def test_added_trigger_equals_what_the_editor_writes(self):
+        import extract as X
+        import miz_edit as ME
+        mt, mr = self._texts("no_script_trigger.miz")
+        rt, rr = self._texts("with_script_trigger.miz")
+        self.assertFalse(ME.find_script_trigger(mt, mr, "orienteering_race.lua"))
+        self.assertTrue(ME.find_script_trigger(rt, rr, "orienteering_race.lua"))
+        nt, nr, key = ME.add_script_trigger(mt, mr, "orienteering_race.lua", "Trigger Load Orienteering Race Script")
+        self.assertEqual(key, "ResKey_Action_7")
+        mine, ref = X.parse_mission(nt), X.parse_mission(rt)
+        for k in ("trigrules", "trig", "maxDictId"):
+            self.assertEqual(mine[k], ref[k], k)
+        self.assertEqual(ME._parse_table(nr, "mapResource"), ME._parse_table(rr, "mapResource"))
+
+    def test_second_trigger_is_appended_not_overwritten(self):
+        import extract as X
+        import miz_edit as ME
+        mt, mr = self._texts("no_script_trigger.miz")
+        t1, r1, k1 = ME.add_script_trigger(mt, mr, "other.lua", "first")
+        t2, r2, k2 = ME.add_script_trigger(t1, r1, "orienteering_race.lua", "second")
+        self.assertNotEqual(k1, k2)
+        m = X.parse_mission(t2)
+        self.assertEqual(sorted(m["trigrules"]), [1, 2])
+        self.assertEqual(sorted(m["trig"]["events"]["mission start"]), [1, 2])
+        self.assertEqual(sorted(m["trig"]["actions"]), [1, 2])
+        self.assertIn(k2, m["trig"]["actions"][2])
+        self.assertTrue(ME.find_script_trigger(t2, r2, "other.lua") and ME.find_script_trigger(t2, r2, "orienteering_race.lua"))
+
+    def test_update_miz_adds_script_and_pages_with_backup(self):
+        import shutil
+        import zipfile
+        import miz_edit as ME
         with tempfile.TemporaryDirectory() as d:
             miz = os.path.join(d, "Race.miz")
-            with zipfile.ZipFile(miz, "w") as z:
-                z.writestr("mission", "mission = {}")
+            shutil.copyfile(os.path.join(FIX, "no_script_trigger.miz"), miz)
+            with zipfile.ZipFile(miz, "a") as z:
                 z.writestr("KNEEBOARD/IMAGES/mine.png", b"keep me")
-                z.writestr("KNEEBOARD/IMAGES/00_overview.png", b"old")
             imgs = os.path.join(d, "pages")
             os.makedirs(imgs)
             for n in ("00_overview.png", "01a_X_medium.png"):
                 Image.new("RGB", (8, 8), (1, 2, 3)).save(os.path.join(imgs, n))
             with open(os.path.join(imgs, "INSTALL.txt"), "w") as f:
                 f.write("x")
-            n, bak = KBM.bake_into_miz(miz, imgs)
-            self.assertEqual(n, 2)
-            self.assertTrue(os.path.exists(bak))
+            script = os.path.join(d, "orienteering_race.lua")
+            with open(script, "wb") as f:
+                f.write(b"-- race script\r\nprint('hi')\r\n")
+            r = ME.update_miz(miz, images_dir=imgs, script_path=script)
+            self.assertEqual((r["script"], r["pages"]), ("added", 2))
+            self.assertTrue(os.path.exists(r["backup"]))
             with zipfile.ZipFile(miz) as z:
                 names = set(z.namelist())
-                self.assertEqual(names, {"mission", "KNEEBOARD/IMAGES/mine.png", "KNEEBOARD/IMAGES/00_overview.png",
-                                         "KNEEBOARD/IMAGES/01a_X_medium.png"})
-                self.assertEqual(z.read("mission"), b"mission = {}")
+                self.assertTrue({"KNEEBOARD/IMAGES/00_overview.png", "KNEEBOARD/IMAGES/01a_X_medium.png",
+                                 "KNEEBOARD/IMAGES/mine.png", "l10n/DEFAULT/orienteering_race.lua",
+                                 "mission", "l10n/DEFAULT/mapResource", "options", "warehouses"} <= names)
                 self.assertEqual(z.read("KNEEBOARD/IMAGES/mine.png"), b"keep me")
-                self.assertNotEqual(z.read("KNEEBOARD/IMAGES/00_overview.png"), b"old")
-            with zipfile.ZipFile(bak) as z:                    # the backup is the untouched original
-                self.assertEqual(z.read("KNEEBOARD/IMAGES/00_overview.png"), b"old")
-            n2, bak2 = KBM.bake_into_miz(miz, imgs)            # a second run never overwrites a backup
-            self.assertNotEqual(bak, bak2)
+                self.assertEqual(z.read("l10n/DEFAULT/orienteering_race.lua"), b"-- race script\r\nprint('hi')\r\n")
+            with zipfile.ZipFile(r["backup"]) as z:                 # backup is the untouched original
+                self.assertNotIn("l10n/DEFAULT/orienteering_race.lua", z.namelist())
+            # again: trigger already there -> script refreshed, no second trigger, new backup name
+            r2 = ME.update_miz(miz, script_path=script)
+            self.assertEqual(r2["script"], "replaced")
+            self.assertNotEqual(r["backup"], r2["backup"])
+            import extract as X
+            with zipfile.ZipFile(miz) as z:
+                self.assertEqual(len(X.parse_mission(z.read("mission").decode())["trigrules"]), 1)
+
+    def test_bad_mission_is_left_untouched(self):
+        import zipfile
+        import miz_edit as ME
+        with tempfile.TemporaryDirectory() as d:
+            miz = os.path.join(d, "Bad.miz")
+            with zipfile.ZipFile(miz, "w") as z:
+                z.writestr("mission", "mission = { }")
+            with open(os.path.join(d, "s.lua"), "w") as f:
+                f.write("x")
+            with open(miz, "rb") as f:
+                before = f.read()
+            with self.assertRaises(ME.MizError):
+                ME.update_miz(miz, script_path=os.path.join(d, "s.lua"))
+            with open(miz, "rb") as f:
+                self.assertEqual(f.read(), before)
+            self.assertEqual(os.listdir(d).count("Bad.miz.bak"), 0)
 
 
 class OneCommand(unittest.TestCase):
@@ -402,7 +467,7 @@ class OneCommand(unittest.TestCase):
 
 
 class GoWithMiz(unittest.TestCase):
-    def test_miz_in_folder_out_then_optional_bake(self):
+    def test_miz_in_folder_out_then_optional_edits(self):
         import shutil
         import zipfile
         with tempfile.TemporaryDirectory() as d:
@@ -412,24 +477,27 @@ class GoWithMiz(unittest.TestCase):
             cli = [sys.executable, "-I", os.path.join(KB, "kneeboard.py")]
             args = ["go", miz, "--cache", os.path.join(d, "cache"), "--render-dir", os.path.join(d, "render"),
                     "--settle", "0", "--again", "0.02", "--only", "00_overview", "--exe", "|".join(mock_cmd())]
-            # interactive: Enter at steps 1-3, then answer n to the bake question
-            r = subprocess.run(cli + args, input="\n\n\nn\n", capture_output=True, text=True, env=env)
+            # interactive: Enter at steps 1-3, then n to the trigger question and n to the kneeboard question
+            r = subprocess.run(cli + args, input="\n\n\nn\nn\n", capture_output=True, text=True, env=env, cwd=d)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             out = os.path.join(d, "Race_kneeboards")
             self.assertTrue(os.path.exists(os.path.join(out, "00_overview.png")))
-            self.assertIn("Also add these pages", r.stdout)
+            self.assertLess(r.stdout.index("MISSION START trigger"), r.stdout.index("Also add the kneeboard pages"))
             self.assertIn("The .miz was not changed", r.stdout)
             with zipfile.ZipFile(miz) as z:
                 self.assertNotIn("KNEEBOARD/IMAGES/00_overview.png", z.namelist())
             self.assertFalse(os.path.exists(miz + ".bak"))
-            # answer y (via --bake): folder stays, the miz gains the page, a backup exists
-            r = subprocess.run(cli + args + ["--yes", "--bake"], capture_output=True, text=True, env=env)
+            # yes to both: the folder stays, the miz gains the trigger, script and page, a backup exists
+            r = subprocess.run(cli + args + ["--yes", "--bake", "--trigger"], capture_output=True, text=True,
+                               env=env, cwd=d)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertTrue(os.path.exists(os.path.join(out, "00_overview.png")))
             self.assertTrue(os.path.exists(miz + ".bak"))
+            import extract as X
             with zipfile.ZipFile(miz) as z:
                 self.assertIn("KNEEBOARD/IMAGES/00_overview.png", z.namelist())
-                self.assertIn("mission", z.namelist())
+                self.assertIn("l10n/DEFAULT/orienteering_race.lua", z.namelist())
+                self.assertEqual(len(X.parse_mission(z.read("mission").decode())["trigrules"]), 1)
 
 
 class EndToEnd(unittest.TestCase):
