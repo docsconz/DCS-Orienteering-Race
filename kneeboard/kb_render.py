@@ -442,7 +442,7 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
             draw.line(ln, fill=(255, 255, 255, 235), width=int(2.2 * SS))
 
     # --- zones
-    big = 16 if kind == "overview" else 0
+    big = 16 if kind == "overview" else (12 if kind in ("medium", "close") else 0)
     markers = []
     for c in ctrls:
         is_focus = (c is focus)
@@ -495,7 +495,7 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
     note = ("Bearings %s, distances nm.  %s" %
             ("MAGNETIC" if unit == "M" else "GRID (no declination data!)",
              ("Contours %g ft, index lines labelled (ft MSL)." % interval) if interval else "No contours."))
-    _label(draw, (30, H - 110 - 0), note, font(22), pad=6) if kind != "overview" else None
+    _label(draw, (30, H - 128), note, font(22), pad=6) if kind != "overview" else None
 
     ov = ov.resize((W, H), Image.LANCZOS)
     return Image.alpha_composite(img, ov).convert("RGB")
