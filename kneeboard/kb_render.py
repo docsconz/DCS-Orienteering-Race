@@ -305,7 +305,43 @@ def draw_cross(draw, c, colour, r=9, w=2.5):
 
 # ---------------------------------------------------------------------------------------------
 
-def draw_contours(ov, draw, z, spec, frame, interval_ft):
+def water_mask(base):
+    """True where the Mission Editor map shows water (blue-green), cleaned of speckle and text."""
+    b = base.astype(np.int16)
+    raw = (b[..., 2] > b[..., 0] + 25) & (b[..., 2] >= b[..., 1] - 3)
+    ii = np.pad(raw.astype(np.int32).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+    r = 2                                                  # 5 x 5 box: more than half water
+    H, W = raw.shape
+    ys = np.arange(H)
+    xs = np.arange(W)
+    y0, y1 = np.clip(ys - r, 0, H), np.clip(ys + r + 1, 0, H)
+    x0, x1 = np.clip(xs - r, 0, W), np.clip(xs + r + 1, 0, W)
+    tot = (ii[y1][:, x1] - ii[y0][:, x1] - ii[y1][:, x0] + ii[y0][:, x0]).astype(np.float32)
+    area = ((y1 - y0)[:, None] * (x1 - x0)[None, :]).astype(np.float32)
+    return tot / area > 0.5
+
+
+def _runs_on_land(px, water):
+    """Split a polyline (page px) into the pieces that are not over water."""
+    if water is None:
+        return [px]
+    H, W = water.shape
+    out, cur = [], []
+    for x, y in px:
+        xi, yi = int(round(x)), int(round(y))
+        wet = 0 <= xi < W and 0 <= yi < H and bool(water[yi, xi])
+        if wet:
+            if len(cur) > 1:
+                out.append(cur)
+            cur = []
+        else:
+            cur.append((x, y))
+    if len(cur) > 1:
+        out.append(cur)
+    return out
+
+
+def draw_contours(ov, draw, z, spec, frame, interval_ft, water=None):
     lines = K.contour_lines(z, interval_ft)
     step = spec["step"]
     sx = step / frame.mpp
@@ -318,9 +354,10 @@ def draw_contours(ov, draw, z, spec, frame, interval_ft):
         if len(px) < 2:
             continue
         w = 2.2 if ln["index"] else 1.0
-        q = [_s(p) for p in px]
-        draw.line(q, fill=HALO, width=int((w + 1.6) * SS), joint="curve")
-        draw.line(q, fill=CONTOUR, width=int(w * SS), joint="curve")
+        for run in _runs_on_land(px, water):
+            q = [_s(p) for p in run]
+            draw.line(q, fill=HALO, width=int((w + 1.6) * SS), joint="curve")
+            draw.line(q, fill=CONTOUR, width=int(w * SS), joint="curve")
         if ln["index"]:
             seg = np.hypot(*np.diff(np.array(px), axis=0).T)
             total = float(seg.sum())
@@ -335,6 +372,8 @@ def draw_contours(ov, draw, z, spec, frame, interval_ft):
                 a, b = px[i], px[i + 1]
                 pos = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
                 if not (40 < pos[0] < frame.w - 40 and 40 < pos[1] < frame.h - 40):
+                    continue
+                if water is not None and water[int(pos[1]), int(pos[0])]:
                     continue
                 if any(math.hypot(pos[0] - o[0], pos[1] - o[1]) < 260 for o in labelled):
                     continue
@@ -425,12 +464,16 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
     if contours and heights is not None:
         z, spec = heights
         interval = K.pick_interval_ft(z, spec["step"] / frame.mpp, base_ft=base_contour_ft)
-        draw_contours(ov, draw, z, spec, frame, interval)
+        draw_contours(ov, draw, z, spec, frame, interval, water_mask(base))
 
     top_res = P.HEADER_PX if kind == "overview" else 0
-    bounds = (14, top_res + 14 if kind == "overview" else 210, W - 14, H - 110)
+    bounds = (14, top_res + 14 if kind == "overview" else 14, W - 14, H - 100)
     taken = []
     table = None
+    hdr = None
+    if kind != "overview":
+        hdr = _control_header(draw, frame, page, data, focus, ctrls, geo, unit, paint=False)
+        taken.append((hdr[0], hdr[1], hdr[2] + 10, hdr[3] + 10))
 
     # --- spokes (overview): START -> each control
     if kind == "overview" and spokes:
@@ -484,24 +527,48 @@ def render_page(base, page, data, heights=None, geo=None, base_contour_ft=40.0, 
         _control_header(draw, frame, page, data, focus, ctrls, geo, unit)
         # the focus control's own label near its zone (points are the thing a pilot needs)
         pos = frame.to_px(*G.zone_centre(focus))
-        _place_badge(draw, pos, taken, (14, 210, W - 14, H - 130),
+        _place_badge(draw, pos, taken, bounds,
                      max(26, (G.zone_size(focus) / frame.mpp) / 2 + 12),
                      num=focus["num"], pts=focus["points"], f=fl)
 
-    # --- footer: scale bar, north arrows, notes
+    # --- footer: scale bar, north arrow
     draw_scale_bar(draw, frame, 30, H - 38 - (0 if kind != "overview" else 0))
     mag = mag_north_angle(geo, page)
     draw_north_arrows(draw, (W - 100, 100) if kind == "overview" else (W - 100, H - 100), mag)
-    note = ("Bearings %s, distances nm.  %s" %
-            ("MAGNETIC" if unit == "M" else "GRID (no declination data!)",
-             ("Contours %g ft, index lines labelled (ft MSL)." % interval) if interval else "No contours."))
-    _label(draw, (30, H - 128), note, font(22), pad=6) if kind != "overview" else None
 
     ov = ov.resize((W, H), Image.LANCZOS)
     return Image.alpha_composite(img, ov).convert("RGB")
 
 
-def _control_header(draw, frame, page, data, c, ctrls, geo, unit):
+def _rich_line(draw, x, cy, tokens, f, paint=True):
+    """Text with inline control circles and START boxes; returns the line width."""
+    fs = font(18, True)
+    d = 36
+    for tk in tokens:
+        if tk[0] == "t":
+            w = _text_size(draw, tk[1], f)[0]
+            if paint:
+                bb = draw.textbbox((0, 0), tk[1], font=f)
+                draw.text((x * SS - bb[0], cy * SS - (bb[1] + bb[3]) / 2), tk[1], font=f, fill=INK)
+        elif tk[0] == "c":
+            w = d
+            if paint:
+                draw_num_circle(draw, x + d / 2, cy, tk[1], fs, d)
+        else:                                           # "s": START in a blue box
+            fb = font(22, True)
+            tw = _text_size(draw, "START", fb)[0]
+            w = tw + 20
+            if paint:
+                draw.rounded_rectangle([x * SS, (cy - 17) * SS, (x + w) * SS, (cy + 17) * SS], radius=6 * SS,
+                                       fill=(255, 255, 255, 246), outline=START, width=int(2.5 * SS))
+                bb = draw.textbbox((0, 0), "START", font=fb)
+                draw.text(((x + 10) * SS - bb[0], cy * SS - (bb[1] + bb[3]) / 2), "START", font=fb, fill=START)
+        x += w
+    return x
+
+
+def _control_header(draw, frame, page, data, c, ctrls, geo, unit, paint=True):
+    """Info box in the top-left corner, only as large as its text.  Returns its rect."""
     W = frame.w
     cc = G.zone_centre(c)
     alt = alt_text(c)
@@ -513,26 +580,32 @@ def _control_header(draw, frame, page, data, c, ctrls, geo, unit):
         rest += "altitude %s   \u2022   " % alt
     rest += "%s view" % page["kind"]
     back = leg(geo, cc, G.zone_centre(data["start"]))
-    parts = ["to START %s" % _fmt_leg(back)]
+    toks = [("t", "to "), ("s",), ("t", " %s" % _fmt_leg(back))]
     for o in _nearest(c, ctrls, 2):
-        parts.append("%02d %s" % (o["num"], _fmt_leg(leg(geo, cc, G.zone_centre(o)))))
-    legs = "   \u2022   ".join(parts)
+        toks += [("t", "     \u2022     "), ("c", o["num"]), ("t", " %s" % _fmt_leg(leg(geo, cc, G.zone_centre(o))))]
     h_sub = _text_size(draw, pts_txt, fs)[1] + 16
-    h_leg = _text_size(draw, legs, fl)[1]
-    total = D + 12 + h_sub + 12 + h_leg + 28
-    draw.rounded_rectangle([14 * SS, 14 * SS, (W - 14) * SS, (14 + total) * SS], radius=10 * SS, fill=PANEL)
+    h_leg = 38
+    bw = _text_size(draw, pts_txt, fs)[0] + 24
+    w_name = 30 + D + 18 + _text_size(draw, c["name"], ft)[0]
+    w_sub = 30 + bw + 18 + _text_size(draw, rest, fs)[0]
+    w_leg = _rich_line(draw, 30, 0, toks, fl, paint=False)
+    right = min(W - 14, 14 + max(w_name, w_sub, w_leg) + 30 - 14 + 14)
+    total = 14 + D + 12 + h_sub + 12 + h_leg + 14
+    rect = (14, 14, right, 14 + total)
+    if not paint:
+        return rect
+    draw.rounded_rectangle([x * SS for x in rect], radius=10 * SS, fill=PANEL)
     y = 28
     draw_num_circle(draw, 30 + D / 2, y + D / 2, c["num"], font(34, True), D)
-    b = draw.textbbox((0, 0), c["name"], font=ft)
-    draw.text(((30 + D + 18) * SS - b[0], (y + D / 2) * SS - (b[1] + b[3]) / 2), c["name"], font=ft, fill=INK)
+    bb = draw.textbbox((0, 0), c["name"], font=ft)
+    draw.text(((30 + D + 18) * SS - bb[0], (y + D / 2) * SS - (bb[1] + bb[3]) / 2), c["name"], font=ft, fill=INK)
     y += D + 12
-    bw = _text_size(draw, pts_txt, fs)[0] + 24
     draw_pts_box(draw, 30, y + h_sub / 2, pts_txt, fs, bw, h_sub)
-    b = draw.textbbox((0, 0), rest, font=fs)
-    draw.text(((30 + bw + 18) * SS - b[0], (y + h_sub / 2) * SS - (b[1] + b[3]) / 2), rest, font=fs, fill=CTRL)
+    bb = draw.textbbox((0, 0), rest, font=fs)
+    draw.text(((30 + bw + 18) * SS - bb[0], (y + h_sub / 2) * SS - (bb[1] + bb[3]) / 2), rest, font=fs, fill=CTRL)
     y += h_sub + 12
-    b = draw.textbbox((0, 0), legs, font=fl)
-    draw.text((30 * SS - b[0], y * SS - b[1]), legs, font=fl, fill=INK)
+    _rich_line(draw, 30, y + h_leg / 2, toks, fl)
+    return rect
 
 
 TROW = 36                                  # overview table row height

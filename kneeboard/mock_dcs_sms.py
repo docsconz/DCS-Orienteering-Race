@@ -19,6 +19,7 @@ PANE = (58, 71, 1630, 981)
 UI = (45, 62, 80)
 CONV_DEG = 5.0
 DECL_DEG = 6.58
+AIRDROME = (-290800.0, 623100.0)
 
 
 def terrain_height(n, e):
@@ -41,6 +42,9 @@ def world_rgb(n, e):
     cy = np.floor(n / 9.0).astype(np.int64)
     dots = ((cx * 73856093) ^ (cy * 19349663)) % 7 == 0
     out[dots & (h > 0)] = (55, 78, 22)
+    if os.environ.get("MOCK_AIRFIELDS"):          # the AIRFIELDS layer: a grey apron round the airfield
+        near = np.hypot(n - AIRDROME[0], e - AIRDROME[1]) < 150.0
+        out[near] = (90, 90, 90)
     road = np.abs(np.sin((e * 0.8 + n * 0.3) / 140.0)) < 0.03
     out[road & (h > 0)] = (160, 70, 0)
     blk = (np.floor(e / 400.0) + np.floor(n / 400.0)) % 5 == 0
@@ -113,6 +117,8 @@ def do_exec(code):
             la, lo = fake_latlon(n, e)
             out.append([la, lo, DECL_DEG])
         return out
+    if m.group(1) == "airdromes":
+        return [{"id": "1", "name": "Mock Field", "n": AIRDROME[0], "e": AIRDROME[1]}]
     if m.group(1) == "heights":
         nx = args["nx"]
         n = args["n0"] - (np.arange(args["j0"], args["j1"])[:, None]) * args["step"]

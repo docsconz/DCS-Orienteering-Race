@@ -9,8 +9,8 @@ Pages per mission (file-name order = kneeboard order):
 | File | What |
 |------|------|
 | `00_overview` | START + every control with points, START→control lines, table of magnetic bearing/distance from START and to the two nearest controls, altitude limits, shortest-route length |
-| `NNa_<name>_medium` | control in context, about 2.6 km across |
-| `NNb_<name>_close` | about 900 m across — only for zones smaller than 300 m |
+| `NNa_<name>_medium` | control in context, about 3.7 km across (twice the area of the first version) |
+| `NNb_<name>_close` | about 900 m across — for zones smaller than 1.5 km |
 | `NNc_<name>_ultra` | about 220 m across — only for zones smaller than 50 m |
 
 Every page is 1536x2048 (a 768x1024 copy is written too): the same 3:4 shape for every aircraft.
@@ -42,8 +42,16 @@ python3 -I kneeboard/kneeboard.py package kb_out --out MyRace_kneeboards
   `--only id1,id2` limits it).
 * `render` is offline and takes seconds, so styling can be redone freely from the cache.
   `--contour-ft 10` sets the base interval; it is coarsened automatically on steep pages so lines stay
-  at least ~14 px apart. Index lines (every 5th) are labelled in feet MSL. `--no-spokes` removes the
+  at least ~10 px apart. Contours are not drawn over water.. Index lines (every 5th) are labelled in feet MSL. `--no-spokes` removes the
   START→control lines.
+* **Airfields (second pass).** With the Mission Editor's AIRFIELDS layer *off* (so radio-beacon cones do
+  not clutter the pages) airfields are missing from the map. For the pages that show one, switch the
+  layer **on** and run `capture build/controls.json --cache kb_cache --airfields`. It reads the map's
+  airfield positions, recaptures only the pages within 1.5 km (`--airfield-margin`) of one into
+  `kb_cache/base_af`, refuses to keep a page that is identical to the first pass (layer not on), and
+  `render` then uses those pictures (not for the overview; `--no-airfield-pass` ignores them).
+* Changing the plan (page sizes, scale) automatically discards the cached capture of the pages that
+  changed, so an old capture is never reused at the wrong zoom.
 * `package` copies the finished pages into one clean folder (`--out`, default `kb_package`) with an
   `INSTALL.txt`. It writes nothing into your mission and never overwrites existing PNGs unless you pass
   `--replace`. `--size 768x1024` packages the smaller copies. DCS degrades oversized images, so check

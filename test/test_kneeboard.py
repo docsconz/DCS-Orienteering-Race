@@ -17,6 +17,7 @@ sys.path.insert(0, KB)
 import numpy as np                                    # noqa: E402
 from PIL import Image                                 # noqa: E402
 
+import kb_capture as C                                # noqa: E402
 import kb_contour as K                                # noqa: E402
 import kb_geom as G                                   # noqa: E402
 import kb_pages as P                                  # noqa: E402
@@ -253,6 +254,93 @@ class Bearings(unittest.TestCase):
         # the mock's lat/lon is a flat approximation, so allow a fraction of a degree
         self.assertAlmostEqual(ang, M.DECL_DEG - M.CONV_DEG, delta=0.5)
         self.assertAlmostEqual(decl, M.DECL_DEG, 6)
+
+
+class Water(unittest.TestCase):
+    def test_water_mask_finds_blue_areas_not_text(self):
+        img = np.zeros((120, 160, 3), np.uint8)
+        img[:] = (90, 120, 70)                         # land
+        img[:, 80:] = (40, 95, 115)                    # sea
+        img[10:13, 10:14] = (40, 40, 160)              # a few blue text pixels on land
+        m = R.water_mask(img)
+        self.assertTrue(m[60, 120] and not m[60, 30])
+        self.assertFalse(m[11, 12])
+
+    def test_contours_are_cut_at_the_shore(self):
+        water = np.zeros((50, 100), bool)
+        water[:, 50:] = True
+        runs = R._runs_on_land([(x, 25) for x in range(0, 100, 5)], water)
+        self.assertEqual(len(runs), 1)
+        self.assertLess(max(p[0] for p in runs[0]), 50)
+
+
+class Airfields(unittest.TestCase):
+    PAGES = [{"id": "00_overview", "kind": "overview", "cn": 0.0, "ce": 0.0, "height_m": 1e6, "width_m": 1e6},
+             {"id": "a", "kind": "medium", "cn": 0.0, "ce": 0.0, "height_m": 3000.0, "width_m": 2000.0},
+             {"id": "b", "kind": "close", "cn": 20000.0, "ce": 0.0, "height_m": 1200.0, "width_m": 900.0}]
+
+    def test_pages_near_an_airfield(self):
+        ad = [{"id": "1", "name": "X", "n": 2000.0, "e": 500.0}]
+        self.assertEqual([p for p, _ in C.pages_near_airfields(self.PAGES, ad)], ["a"])   # not overview, not b
+
+    def test_layer_change_detection(self):
+        a = np.zeros((100, 100, 3), np.uint8)
+        b = a.copy()
+        self.assertFalse(C.layer_changed(a, b))
+        b[40:60, 40:60] = 200
+        self.assertTrue(C.layer_changed(a, b))
+
+    def test_second_pass_end_to_end(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = dict(os.environ, MOCK_STATE=os.path.join(d, "state.json"))
+            ctl = os.path.join(d, "controls.json")
+            with open(ctl, "w") as f:
+                json.dump(DATA, f)
+            cli = [sys.executable, "-I", os.path.join(KB, "kneeboard.py")]
+            cache = os.path.join(d, "cache")
+            common = ["--cache", cache, "--settle", "0", "--again", "0.02", "--only", "02c_Tiny_Pad_ultra",
+                      "--exe", "|".join(mock_cmd())]
+            r = subprocess.run(cli + ["capture", ctl] + common + ["--scratch"], capture_output=True,
+                               text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            # layer still off: the second pass must notice and save nothing
+            r = subprocess.run(cli + ["capture", ctl, "--airfields"] + common, capture_output=True,
+                               text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("02c_Tiny_Pad_ultra", r.stdout)
+            self.assertIn("does not look switched on", r.stdout)
+            self.assertFalse(os.path.exists(os.path.join(cache, "base_af", "02c_Tiny_Pad_ultra.png")))
+            # layer on: saved, and render uses it
+            env2 = dict(env, MOCK_AIRFIELDS="1")
+            r = subprocess.run(cli + ["capture", ctl, "--airfields", "--recapture"] + common, capture_output=True,
+                               text=True, env=env2)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            af = os.path.join(cache, "base_af", "02c_Tiny_Pad_ultra.png")
+            self.assertTrue(os.path.exists(af))
+            with Image.open(af) as a2, Image.open(os.path.join(cache, "base", "02c_Tiny_Pad_ultra.png")) as a1:
+                self.assertTrue(C.layer_changed(np.asarray(a1.convert("RGB")), np.asarray(a2.convert("RGB"))))
+
+
+class Stale(unittest.TestCase):
+    def test_changed_zoom_discards_old_capture(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = dict(os.environ, MOCK_STATE=os.path.join(d, "state.json"))
+            ctl = os.path.join(d, "controls.json")
+            with open(ctl, "w") as f:
+                json.dump(DATA, f)
+            cli = [sys.executable, "-I", os.path.join(KB, "kneeboard.py")]
+            cache = os.path.join(d, "cache")
+            common = ["--cache", cache, "--settle", "0", "--again", "0.02", "--only", "02c_Tiny_Pad_ultra",
+                      "--exe", "|".join(mock_cmd())]
+            r = subprocess.run(cli + ["capture", ctl] + common + ["--scratch"], capture_output=True,
+                               text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            tile = os.path.join(cache, "tiles", "02c_Tiny_Pad_ultra_t0.png")
+            self.assertTrue(os.path.exists(tile))
+            r = subprocess.run(cli + ["capture", ctl] + common + ["--ultra-m", "400"], capture_output=True,
+                               text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("02c_Tiny_Pad_ultra changed since it was last captured", r.stdout)
 
 
 class EndToEnd(unittest.TestCase):

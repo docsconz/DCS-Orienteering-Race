@@ -54,6 +54,24 @@ return out
 """
 
 
+AIRDROMES_LUA = """-- KB:airdromes
+-- ARGS:{}
+local T = rawget(_G, 'Terrain') or rawget(_G, 'terrain')
+local ok, cfg = pcall(T.GetTerrainConfig, 'Airdromes')
+if not ok or type(cfg) ~= 'table' then
+  return { error = 'no Airdromes in the terrain config: ' .. tostring(cfg) }
+end
+local out = {}
+for id, ad in pairs(cfg) do
+  local rp = ad.reference_point
+  if type(rp) == 'table' and rp.x and rp.y then
+    out[#out + 1] = { id = tostring(id), name = tostring(ad.display_name or ad.name or id), n = rp.x, e = rp.y }
+  end
+end
+return out
+"""
+
+
 class Dcs:
     """`cmd` is the argv prefix, e.g. ["dcs-sms.exe"] (or the mock in tests)."""
 
@@ -120,6 +138,38 @@ def fetch_geo(dcs, points, chunk=200):
         for p, r in zip(part, res):
             out.append({"n": p[0], "e": p[1], "lat": r[0], "lon": r[1], "decl": r[2]})
     return out
+
+
+def fetch_airdromes(dcs):
+    """[{'id','name','n','e'}] - the map's airfields (reference points), from the terrain config."""
+    res = dcs.exec_lua(AIRDROMES_LUA)
+    if isinstance(res, dict) and res.get("error"):
+        raise DcsError("airfield list: %s" % res["error"])
+    if isinstance(res, dict):                      # a Lua table that came back as a JSON object
+        res = list(res.values())
+    return [{"id": str(r["id"]), "name": r["name"], "n": float(r["n"]), "e": float(r["e"])} for r in (res or [])]
+
+
+def pages_near_airfields(pages, airdromes, margin_m=1500.0):
+    """Ids of control pages whose map area (plus a margin) contains an airfield reference point."""
+    out = []
+    for p in pages:
+        if p["kind"] == "overview":
+            continue
+        for a in airdromes:
+            if (abs(a["n"] - p["cn"]) <= p["height_m"] / 2.0 + margin_m and
+                    abs(a["e"] - p["ce"]) <= p["width_m"] / 2.0 + margin_m):
+                out.append((p["id"], a["name"]))
+                break
+    return out
+
+
+def layer_changed(a, b, thresh=40, min_frac=0.0005):
+    """Do two captures of the same page differ (i.e. was a map layer switched on in between)?"""
+    if a.shape != b.shape:
+        return True
+    d = np.abs(a.astype(np.int16) - b.astype(np.int16)).max(axis=2)
+    return float((d > thresh).mean()) > min_frac
 
 
 def height_grid_spec(frame, min_step_m=5.0, px_per_sample=4.0, border_px=64):

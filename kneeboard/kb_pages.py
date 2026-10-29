@@ -9,8 +9,8 @@ FOOTER_PX = 110        # kept clear at the bottom of the overview (scale bar)
 
 
 class PageOptions:
-    def __init__(self, medium_w_m=2600.0, close_w_m=900.0, ultra_w_m=220.0,
-                 close_below_m=300.0, ultra_below_m=50.0, overview_margin=0.12,
+    def __init__(self, medium_w_m=3700.0, close_w_m=900.0, ultra_w_m=220.0,
+                 close_below_m=1500.0, ultra_below_m=50.0, overview_margin=0.12,
                  min_overview_m=1500.0):
         self.medium_w_m = medium_w_m
         self.close_w_m = close_w_m
