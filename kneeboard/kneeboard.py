@@ -285,6 +285,53 @@ def cmd_package(a):
     print("wrote %d pages (%s) to %s" % (len(names), a.size, out))
 
 
+def bake_into_miz(miz, images_dir):
+    """Add the PNGs of `images_dir` to the .miz under KNEEBOARD/IMAGES/ (same pages as the folder).
+
+    A backup copy is made first (MyRace.miz.bak, or a numbered one if that exists); the new .miz is
+    written next to it and swapped in only when complete.  Existing entries are kept; pages with the
+    same name are replaced.  Returns (number of pages, backup path)."""
+    import zipfile
+    names = sorted(n for n in os.listdir(images_dir) if n.lower().endswith(".png"))
+    if not names:
+        raise ValueError("no PNGs in %s" % images_dir)
+    bak = miz + ".bak"
+    k = 1
+    while os.path.exists(bak):
+        k += 1
+        bak = "%s.bak%d" % (miz, k)
+    shutil.copyfile(miz, bak)
+    new = {"KNEEBOARD/IMAGES/" + n for n in names}
+    tmp = miz + ".new"
+    try:
+        with zipfile.ZipFile(miz) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename in new:
+                    continue
+                zout.writestr(item, zin.read(item.filename))
+            for n in names:
+                zout.write(os.path.join(images_dir, n), "KNEEBOARD/IMAGES/" + n)
+        os.replace(tmp, miz)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+    return len(names), bak
+
+
+def yes_no(text):
+    while True:
+        try:
+            r = input(text + " [y/n] ").strip().lower()
+        except EOFError:
+            return False
+        if r in ("y", "yes"):
+            return True
+        if r in ("n", "no"):
+            return False
+        print("   Please answer y or n.")
+
+
 def ask(a, text):
     """Pause for a manual step in the Mission Editor (skipped with --yes)."""
     print("\n" + text)
@@ -367,7 +414,21 @@ def cmd_go(a):
     main(["render", controls, "--cache", cache, "--out", a.render_dir,
           "--contour-ft", str(a.contour_ft)] + (["--only", a.only] if a.only else []))
     main(["package", a.render_dir, "--out", out, "--size", a.size, "--replace"])
-    print("\nDone.  Kneeboard pages: %s" % os.path.abspath(out))
+    print("\nThe pages are in: %s" % os.path.abspath(out))
+    if src.lower().endswith(".miz") and not a.no_bake:
+        print()
+        if a.bake or (not a.yes and yes_no("Also add these pages to %s (under KNEEBOARD/IMAGES, so every player "
+                                            "gets them)? A backup copy of the .miz is made first." % os.path.basename(src))):
+            try:
+                n, bak = bake_into_miz(src, os.path.join(out))
+                print("Added %d pages to %s.  Backup: %s" % (n, src, bak))
+                print("If the mission is open in the Mission Editor, close it without saving and reopen it.")
+            except (OSError, ValueError) as e:
+                print("Could not update the .miz (%s).  The pages in the folder are fine; copy them in yourself "
+                      "(see INSTALL.txt)." % e)
+        else:
+            print("The .miz was not changed.")
+    print("\nDone.")
 
 
 def main(argv=None):
@@ -441,6 +502,8 @@ def main(argv=None):
     p.add_argument("--yes", action="store_true", help="do not pause for the Mission Editor steps")
     p.add_argument("--no-scratch", action="store_true", help="do not open a new empty mission (you are in one already)")
     p.add_argument("--no-airfields", action="store_true", help="skip the airfield second pass")
+    p.add_argument("--bake", action="store_true", help="add the pages to the .miz without asking")
+    p.add_argument("--no-bake", action="store_true", help="never offer to add the pages to the .miz")
     add_pages(p)
     p.set_defaults(fn=cmd_go)
 

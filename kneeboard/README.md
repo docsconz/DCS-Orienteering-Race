@@ -37,6 +37,11 @@ short second capture. Then it captures, draws and packages everything into `MyRa
 `--no-airfields` to skip the second pass, `--yes` to not pause. The commands below are the same steps
 one at a time.
 
+At the very end `go` asks whether to also add the pages to the .miz (`KNEEBOARD/IMAGES/`, so every
+player gets them). Either way the pages stay in the folder. Saying yes makes a backup copy first
+(`MyRace.miz.bak`, never overwritten) and keeps everything else in the .miz; if the mission is open in
+the Mission Editor, close it without saving and reopen it. `--bake` answers yes, `--no-bake` never asks.
+
 ## Workflow
 
 ```

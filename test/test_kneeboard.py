@@ -343,6 +343,38 @@ class Stale(unittest.TestCase):
             self.assertIn("02c_Tiny_Pad_ultra changed since it was last captured", r.stdout)
 
 
+class Bake(unittest.TestCase):
+    def test_pages_added_to_miz_with_backup(self):
+        import zipfile
+        import kneeboard as KBM
+        with tempfile.TemporaryDirectory() as d:
+            miz = os.path.join(d, "Race.miz")
+            with zipfile.ZipFile(miz, "w") as z:
+                z.writestr("mission", "mission = {}")
+                z.writestr("KNEEBOARD/IMAGES/mine.png", b"keep me")
+                z.writestr("KNEEBOARD/IMAGES/00_overview.png", b"old")
+            imgs = os.path.join(d, "pages")
+            os.makedirs(imgs)
+            for n in ("00_overview.png", "01a_X_medium.png"):
+                Image.new("RGB", (8, 8), (1, 2, 3)).save(os.path.join(imgs, n))
+            with open(os.path.join(imgs, "INSTALL.txt"), "w") as f:
+                f.write("x")
+            n, bak = KBM.bake_into_miz(miz, imgs)
+            self.assertEqual(n, 2)
+            self.assertTrue(os.path.exists(bak))
+            with zipfile.ZipFile(miz) as z:
+                names = set(z.namelist())
+                self.assertEqual(names, {"mission", "KNEEBOARD/IMAGES/mine.png", "KNEEBOARD/IMAGES/00_overview.png",
+                                         "KNEEBOARD/IMAGES/01a_X_medium.png"})
+                self.assertEqual(z.read("mission"), b"mission = {}")
+                self.assertEqual(z.read("KNEEBOARD/IMAGES/mine.png"), b"keep me")
+                self.assertNotEqual(z.read("KNEEBOARD/IMAGES/00_overview.png"), b"old")
+            with zipfile.ZipFile(bak) as z:                    # the backup is the untouched original
+                self.assertEqual(z.read("KNEEBOARD/IMAGES/00_overview.png"), b"old")
+            n2, bak2 = KBM.bake_into_miz(miz, imgs)            # a second run never overwrites a backup
+            self.assertNotEqual(bak, bak2)
+
+
 class OneCommand(unittest.TestCase):
     def test_go_runs_every_step(self):
         with tempfile.TemporaryDirectory() as d:
@@ -367,6 +399,37 @@ class OneCommand(unittest.TestCase):
                                       "--exe", "|".join(mock_cmd())], capture_output=True, text=True, env=env)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             self.assertIn("keeping it", r.stdout)
+
+
+class GoWithMiz(unittest.TestCase):
+    def test_miz_in_folder_out_then_optional_bake(self):
+        import shutil
+        import zipfile
+        with tempfile.TemporaryDirectory() as d:
+            env = dict(os.environ, MOCK_STATE=os.path.join(d, "state.json"))
+            miz = os.path.join(d, "Race.miz")
+            shutil.copyfile(os.path.join(os.path.dirname(HERE), "examples", "Orienteering_Test.miz"), miz)
+            cli = [sys.executable, "-I", os.path.join(KB, "kneeboard.py")]
+            args = ["go", miz, "--cache", os.path.join(d, "cache"), "--render-dir", os.path.join(d, "render"),
+                    "--settle", "0", "--again", "0.02", "--only", "00_overview", "--exe", "|".join(mock_cmd())]
+            # interactive: Enter at steps 1-3, then answer n to the bake question
+            r = subprocess.run(cli + args, input="\n\n\nn\n", capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            out = os.path.join(d, "Race_kneeboards")
+            self.assertTrue(os.path.exists(os.path.join(out, "00_overview.png")))
+            self.assertIn("Also add these pages", r.stdout)
+            self.assertIn("The .miz was not changed", r.stdout)
+            with zipfile.ZipFile(miz) as z:
+                self.assertNotIn("KNEEBOARD/IMAGES/00_overview.png", z.namelist())
+            self.assertFalse(os.path.exists(miz + ".bak"))
+            # answer y (via --bake): folder stays, the miz gains the page, a backup exists
+            r = subprocess.run(cli + args + ["--yes", "--bake"], capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertTrue(os.path.exists(os.path.join(out, "00_overview.png")))
+            self.assertTrue(os.path.exists(miz + ".bak"))
+            with zipfile.ZipFile(miz) as z:
+                self.assertIn("KNEEBOARD/IMAGES/00_overview.png", z.namelist())
+                self.assertIn("mission", z.namelist())
 
 
 class EndToEnd(unittest.TestCase):
