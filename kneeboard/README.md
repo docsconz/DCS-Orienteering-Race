@@ -23,6 +23,20 @@ Every page is 1536x2048 (a 768x1024 copy is written too): the same 3:4 shape for
 * DCS **windowed**, not minimised, nothing covering the window, display scaling 100%, SRS overlay off.
   Do not resize the window during a run.
 
+## Quick start (one command)
+
+```
+python -I kneeboard\kneeboard.py go MyRace.miz
+```
+
+or drag the .miz onto `make_kneeboards.bat`. It reads the zones, then walks you through the few Mission
+Editor steps (it pauses with a message and waits for Enter): open + save the race mission, set the map to
+SAT with the AIRFIELDS layer off, and - only if some page shows an airfield - switch AIRFIELDS on for a
+short second capture. Then it captures, draws and packages everything into `MyRace_kneeboards` next to the
+.miz. Re-running resumes from the cache; `--no-scratch` if you are already in an empty mission,
+`--no-airfields` to skip the second pass, `--yes` to not pause. The commands below are the same steps
+one at a time.
+
 ## Workflow
 
 ```

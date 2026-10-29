@@ -6,6 +6,10 @@
   python3 -I kneeboard/kneeboard.py render  build/controls.json --cache kb_cache --out kb_out
   python3 -I kneeboard/kneeboard.py package kb_out --out MyRace_kneeboards
 
+or all of it in one command (it pauses for the Mission Editor steps):
+
+  python3 -I kneeboard/kneeboard.py go MyRace.miz
+
 controls.json comes from extract.py.  See kneeboard/README.md.
 """
 import argparse
@@ -66,6 +70,8 @@ def cmd_capture(a):
             json.dump(rows, f)
         print("  declination at START: %+.2f deg" % rows[0]["decl"])
 
+    if a.geo_only:
+        return
     if a.scratch:
         print("Opening a new empty %s mission for capture (your race mission is untouched; if it has "
               "unsaved edits the Mission Editor will refuse - save first)." % data["theatre"])
@@ -145,13 +151,10 @@ def drop_stale(cache, pane, pages):
                 os.remove(g)
 
 
-def airfield_pass(a, dcs, pages, pane, only, t0):
-    """Second capture, with the Mission Editor's AIRFIELDS layer ON, of the pages that show an airfield.
-
-    The first pass is kept (its overview and all other pages stay free of radio-beacon cones);
-    render uses the second-pass picture instead for the pages recaptured here."""
-    af_path = os.path.join(a.cache, "airfields.json")
-    if os.path.exists(af_path) and not a.refresh_airfields:
+def airfield_pages(cache, dcs, pages, margin, refresh=False):
+    """[(page id, airfield name)] for the pages that show an airfield (list cached in airfields.json)."""
+    af_path = os.path.join(cache, "airfields.json")
+    if os.path.exists(af_path) and not refresh:
         with open(af_path) as f:
             airdromes = json.load(f)
     else:
@@ -160,7 +163,15 @@ def airfield_pass(a, dcs, pages, pane, only, t0):
         with open(af_path, "w") as f:
             json.dump(airdromes, f, indent=1)
     print("  %d airfields on this map" % len(airdromes))
-    near = C.pages_near_airfields(pages, airdromes, a.airfield_margin)
+    return C.pages_near_airfields(pages, airdromes, margin)
+
+
+def airfield_pass(a, dcs, pages, pane, only, t0):
+    """Second capture, with the Mission Editor's AIRFIELDS layer ON, of the pages that show an airfield.
+
+    The first pass is kept (its overview and all other pages stay free of radio-beacon cones);
+    render uses the second-pass picture instead for the pages recaptured here."""
+    near = airfield_pages(a.cache, dcs, pages, a.airfield_margin, a.refresh_airfields)
     if only:
         near = [n for n in near if n[0] in only]
     if not near:
@@ -275,6 +286,91 @@ def cmd_package(a):
     print("wrote %d pages (%s) to %s" % (len(names), a.size, out))
 
 
+def ask(a, text):
+    """Pause for a manual step in the Mission Editor (skipped with --yes)."""
+    print("\n" + text)
+    if not a.yes:
+        try:
+            input("   Press Enter when ready (Ctrl+C to stop)... ")
+        except EOFError:
+            pass
+
+
+def cmd_go(a):
+    """Everything in one command: extract, capture (both passes), render, package."""
+    src = a.source
+    here = os.path.dirname(os.path.abspath(__file__))
+    cache = a.cache
+    os.makedirs(cache, exist_ok=True)
+    if src.lower().endswith(".miz"):
+        import subprocess
+        xdir = os.path.join(cache, "extract")
+        print("Reading zones from %s ..." % src)
+        r = subprocess.run([sys.executable, "-I", os.path.join(os.path.dirname(here), "extract.py"), src,
+                            "--out", xdir])
+        if r.returncode != 0:
+            sys.exit("extract.py found problems with the mission (see above) - fix them and run again")
+        controls = os.path.join(xdir, "controls.json")
+        stem = os.path.splitext(os.path.basename(src))[0]
+        out = a.out or os.path.join(os.path.dirname(os.path.abspath(src)), stem + "_kneeboards")
+    else:
+        controls = src
+        out = a.out or "kb_package"
+    data = load_data(controls)
+    pages = P.build_pages(data, page_options(a))
+    print("%d pages (%s)" % (len(pages), ", ".join("%d %s" % (n, k) for k, n in sorted(
+        {k: sum(1 for p in pages if p["kind"] == k) for k in {p["kind"] for p in pages}}.items()))))
+    dcs = C.Dcs(cmd=a.exe.split("|"), scratch=os.path.join(cache, "scratch"))
+
+    common = ["--cache", cache, "--exe", a.exe, "--settle", str(a.settle), "--again", str(a.again),
+              "--medium-m", str(a.medium_m), "--close-m", str(a.close_m), "--ultra-m", str(a.ultra_m),
+              "--close-below", str(a.close_below), "--ultra-below", str(a.ultra_below)]
+    if a.only:
+        common += ["--only", a.only]
+
+    # 1. lat/lon + magnetic declination, read while the race mission is the open one
+    if not os.path.exists(os.path.join(cache, "geo.json")):
+        ask(a, "STEP 1 - Open your race mission in the Mission Editor and SAVE it (DCS windowed, not minimised).\n"
+               "   This reads the magnetic declination, which depends on the mission date.")
+        main(["capture", controls, "--geo-only"] + common)
+    else:
+        print("Declination already read (kb_cache/geo.json) - keeping it.")
+
+    # 2. an empty mission on the same map, with the map set up the way the pages should look
+    if not a.no_scratch:
+        ask(a, "STEP 2 - I will now open a new EMPTY %s mission (your race mission is not touched; if it has "
+               "unsaved edits the Mission Editor refuses - save it first)." % data["theatre"])
+        dcs.new_scratch_mission(data["theatre"])
+        time.sleep(4)
+    ask(a, "STEP 3 - In the Mission Editor set up the map:\n"
+           "   * map layer SAT (satellite)\n"
+           "   * AIRFIELDS layer OFF, radio beacons / bullseye hidden\n"
+           "   * nothing covering the map; do not touch the window while capturing")
+    main(["capture", controls] + common)
+
+    # 3. airfields: only if some page shows one
+    if not a.no_airfields:
+        with open(os.path.join(cache, "plan.json")) as f:
+            plan_pages = json.load(f)["pages"]
+        near = airfield_pages(cache, dcs, plan_pages, 1500.0)
+        if a.only:
+            near = [n for n in near if n[0] in set(a.only.split(","))]
+        if near:
+            ask(a, "STEP 4 - %d pages show an airfield (%s%s).\n"
+                   "   Switch the AIRFIELDS layer ON in the Mission Editor for a second capture of just those pages."
+                   % (len(near), ", ".join(n[0] for n in near[:3]), ", ..." if len(near) > 3 else ""))
+            main(["capture", controls, "--airfields"] + common)
+        else:
+            print("No page shows an airfield - no second pass needed.")
+
+    # 4. overlays + package
+    print("\nDrawing the pages...")
+    main(["render", controls, "--cache", cache, "--out", a.render_dir,
+          "--contour-ft", str(a.contour_ft)] + (["--only", a.only] if a.only else []))
+    main(["package", a.render_dir, "--out", out, "--size", a.size, "--replace"])
+    print("\nDone.  Kneeboard pages: %s" % os.path.abspath(out))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -305,6 +401,7 @@ def main(argv=None):
     p.add_argument("--recapture", action="store_true")
     p.add_argument("--refresh-geo", action="store_true")
     p.add_argument("--no-contours", action="store_true")
+    p.add_argument("--geo-only", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--airfields", action="store_true",
                    help="second pass: recapture only the pages that show an airfield, with the ME's "
                         "AIRFIELDS layer switched ON")
@@ -330,6 +427,23 @@ def main(argv=None):
     p.add_argument("--size", default="1536x2048", choices=["1536x2048", "768x1024"])
     p.add_argument("--replace", action="store_true", help="overwrite PNGs already in the folder")
     p.set_defaults(fn=cmd_package)
+
+    p = sub.add_parser("go", help="the whole job in one command (asks you to do the Mission Editor steps)")
+    p.add_argument("source", help="the race .miz (or a controls.json from extract.py)")
+    p.add_argument("--out", help="folder for the finished pages (default: <mission>_kneeboards next to the .miz)")
+    p.add_argument("--cache", default="kb_cache")
+    p.add_argument("--render-dir", default="kb_out")
+    p.add_argument("--exe", default="dcs-sms.exe")
+    p.add_argument("--size", default="1536x2048", choices=["1536x2048", "768x1024"])
+    p.add_argument("--contour-ft", type=float, default=10.0)
+    p.add_argument("--settle", type=float, default=2.0)
+    p.add_argument("--again", type=float, default=0.8, help=argparse.SUPPRESS)
+    p.add_argument("--only", help=argparse.SUPPRESS)
+    p.add_argument("--yes", action="store_true", help="do not pause for the Mission Editor steps")
+    p.add_argument("--no-scratch", action="store_true", help="do not open a new empty mission (you are in one already)")
+    p.add_argument("--no-airfields", action="store_true", help="skip the airfield second pass")
+    add_pages(p)
+    p.set_defaults(fn=cmd_go)
 
     a = ap.parse_args(argv)
     a.fn(a)

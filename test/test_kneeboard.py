@@ -343,6 +343,32 @@ class Stale(unittest.TestCase):
             self.assertIn("02c_Tiny_Pad_ultra changed since it was last captured", r.stdout)
 
 
+class OneCommand(unittest.TestCase):
+    def test_go_runs_every_step(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = dict(os.environ, MOCK_STATE=os.path.join(d, "state.json"))
+            ctl = os.path.join(d, "controls.json")
+            with open(ctl, "w") as f:
+                json.dump(DATA, f)
+            cli = [sys.executable, "-I", os.path.join(KB, "kneeboard.py")]
+            out = os.path.join(d, "pages")
+            r = subprocess.run(cli + ["go", ctl, "--yes", "--cache", os.path.join(d, "cache"),
+                                      "--render-dir", os.path.join(d, "render"), "--out", out,
+                                      "--settle", "0", "--again", "0.02", "--only", "02c_Tiny_Pad_ultra,00_overview",
+                                      "--exe", "|".join(mock_cmd())], capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            for step in ("STEP 1", "STEP 2", "STEP 3", "STEP 4", "Done."):
+                self.assertIn(step, r.stdout)
+            self.assertEqual(sorted(os.listdir(out)), ["00_overview.png", "02c_Tiny_Pad_ultra.png", "INSTALL.txt"])
+            # run again: nothing to redo, still fine (resumable)
+            r = subprocess.run(cli + ["go", ctl, "--yes", "--cache", os.path.join(d, "cache"),
+                                      "--render-dir", os.path.join(d, "render"), "--out", out,
+                                      "--settle", "0", "--again", "0.02", "--only", "02c_Tiny_Pad_ultra,00_overview",
+                                      "--exe", "|".join(mock_cmd())], capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("keeping it", r.stdout)
+
+
 class EndToEnd(unittest.TestCase):
     def test_capture_render_package(self):
         with tempfile.TemporaryDirectory() as d:
