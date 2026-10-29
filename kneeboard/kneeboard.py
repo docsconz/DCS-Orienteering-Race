@@ -180,8 +180,7 @@ def airfield_pass(a, dcs, pages, pane, only, t0):
     print("%d pages show an airfield:" % len(near))
     for pid, name in near:
         print("  %-34s %s" % (pid, name))
-    print("Make sure the AIRFIELDS layer is switched ON in the Mission Editor (radio-beacon cones off if "
-          "there is a separate switch).")
+    print("Make sure the AIRFIELDS layer is switched ON in the Mission Editor (USER OBJECTS stays OFF).")
     by_id = {p["id"]: p for p in pages}
     os.makedirs(os.path.join(a.cache, "base_af"), exist_ok=True)
     kept = 0
@@ -344,7 +343,7 @@ def cmd_go(a):
         time.sleep(4)
     ask(a, "STEP 3 - In the Mission Editor set up the map:\n"
            "   * map layer SAT (satellite)\n"
-           "   * AIRFIELDS layer OFF, radio beacons / bullseye hidden\n"
+           "   * AIRFIELDS layer OFF, USER OBJECTS layer OFF\n"
            "   * nothing covering the map; do not touch the window while capturing")
     main(["capture", controls] + common)
 
