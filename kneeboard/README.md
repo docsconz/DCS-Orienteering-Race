@@ -29,7 +29,7 @@ Every page is 1536x2048 (a 768x1024 copy is written too): the same 3:4 shape for
 python -I kneeboard\kneeboard.py go MyRace.miz
 ```
 
-or drag the .miz onto `make_kneeboards.bat`. It reads the zones, then walks you through the few Mission
+or drag the .miz onto `make_kneeboards.bat` (which makes the 768x1024 pages; add `--size 1536x2048` for the larger ones). It reads the zones, then walks you through the few Mission
 Editor steps (it pauses with a message and waits for Enter): open + save the race mission, set the map to
 SAT with the AIRFIELDS layer off, and - only if some page shows an airfield - switch AIRFIELDS on for a
 short second capture. Then it captures, draws and packages everything into `MyRace_kneeboards` next to the
