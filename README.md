@@ -31,8 +31,8 @@ overridden from the generated `SETTINGS` block.
   Altitude limits are checked where the path is inside the zone.
 - Finish: enter START after having been > 500 m (`arm_dist_m`) outside it. Penalty = P × (1 + whole minutes late);
   late = after race end. Finished players are told; aircraft are never destroyed (optional `despawn_delay_s` setting, off by default).
-- Leaving your slot and spawning again (any aircraft) resets that player's score to 0 and lets them re-earn controls. Finished, DNF and DQ players are never reset. The player is told, and `resets` is recorded in the snapshots.
-- Death/ejection before finishing: keeps points, status `DNF-died`, no rank. After finishing: normal.
+- Leaving your slot and spawning again (any aircraft) resets that player's score to 0 and lets them re-earn controls. Finished and DQ players are never reset. The player is told, and `resets` is recorded in the snapshots.
+- Death/ejection before finishing: score and collected controls are reset to 0, status `DNF-died` (no rank) until the player slots into a new aircraft; then they race again from 0 and can score every control, including ones they had before dying. After finishing: normal.
 - Broadcasts at 10 and 5 minutes before race end (`warn_before_end_s`; calls longer than the race are skipped).
 - Finish message goes to the finisher only (set `announce_finish = true` to tell everyone).
 - Hard stop (end + grace): unfinished players become `DQ`; final results written; timers stop.

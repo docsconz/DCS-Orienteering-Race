@@ -552,21 +552,27 @@ local function registerUnit(u)
   if isNew then rec = newRec(name); ST.players[name] = rec end
   local uid = u:getID()
   local changed = (rec.unitId ~= uid)
-  -- Leaving the slot and spawning again (or appearing in a different aircraft) restarts the player at 0.
-  -- Finished / DNF / DQ players are never reset.
-  local fresh = (not isNew) and (rec.status == "racing" or rec.status == "left")
+  -- Leaving the slot and spawning again (or appearing in a different aircraft) restarts the player at 0,
+  -- and so does slotting in again after dying (death already zeroed the score).
+  -- Finished / DQ players are never reset.
+  local fresh = (not isNew) and (rec.status == "racing" or rec.status == "left" or rec.status == "DNF-died")
                 and (changed or rec.status == "left")
   rec.unit, rec.unitId = u, uid
   rec.class, rec.typeName = classify(u)
   if changed then rec.lx = nil end
-  if rec.status == "left" then rec.status = "racing" end
+  local wasDead = (rec.status == "DNF-died")
+  if rec.status == "left" or wasDead then rec.status, rec.diedT = "racing", nil end
   if fresh then
     local lost, n = rec.pts, #rec.hitList
     rec.pts, rec.penalty, rec.hits, rec.hitList, rec.armed, rec.lx = 0, 0, {}, {}, false, nil
     rec.resets = (rec.resets or 0) + 1
     log(string.format("%s respawned: points reset (was %d pts, %d controls)", name, lost, n))
-    toPlayer(rec, string.format("You left your aircraft and spawned a new one - your score has been RESET to 0%s.",
-      lost > 0 and string.format(" (you had %d)", lost) or ""), 20)
+    if wasDead then
+      toPlayer(rec, "New aircraft - you are racing again from 0 pts. All controls can be scored again.", 20)
+    else
+      toPlayer(rec, string.format("You left your aircraft and spawned a new one - your score has been RESET to 0%s.",
+        lost > 0 and string.format(" (you had %d)", lost) or ""), 20)
+    end
   end
   if isNew or changed then
     if rec.class == "UNK" then
@@ -591,8 +597,11 @@ end
 
 local function markDead(rec)
   if rec.status ~= "racing" and rec.status ~= "left" then return end
+  local lost = net(rec)
   rec.status, rec.diedT = "DNF-died", rtime()
-  toAll(string.format("%s is down (%d pts, DNF)", rec.name, net(rec)), 10)
+  rec.pts, rec.penalty, rec.hits, rec.hitList, rec.armed = 0, 0, {}, {}, false
+  toAll(string.format("%s is down - score reset to 0 (had %d pts)", rec.name, lost), 10)
+  log(string.format("%s died: score reset to 0 (was %d)", rec.name, lost))
   snapshot("death", rec.name)
 end
 

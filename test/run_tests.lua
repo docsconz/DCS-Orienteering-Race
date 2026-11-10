@@ -296,7 +296,7 @@ do
   W.fire({ id = H.EV.S_EVENT_PILOT_DEAD, initiator = d2.obj }); d2.alive = false
   local rk = {}
   for _, r in ipairs(W.ORI.buildBoard()) do rk[r.name] = r end
-  check(rk.DiesFirst.status == "DNF-died" and rk.DiesFirst.pts == 11 and rk.DiesFirst.rank == nil, "G died before finishing: DNF, keeps points, no rank")
+  check(rk.DiesFirst.status == "DNF-died" and rk.DiesFirst.pts == 0 and #rk.DiesFirst.hitList == 0 and rk.DiesFirst.rank == nil, "G died before finishing: DNF, score reset to 0, no rank")
   check(rk.DiesAfter.status == "finished" and rk.DiesAfter.rank == 2 and rk.DiesAfter.finishT, "G died after finishing: normal score (ranked below the 11-pt racer)", rk.DiesAfter.rank)
   check(W.ORI.buildBoard()[#W.ORI.buildBoard()].name == "DiesFirst", "G flagged player sorted below")
   -- leave and rejoin keeps progress
@@ -315,8 +315,13 @@ do
   local fin2 = W.spawn("DiesAfter", "F-5E-3", SX, 200, SZ + FAR)
   check(fin.status == "finished" and fin.finishT ~= nil and fin.resets == nil, "G finished player not reset by re-slotting")
   local dead = rk.DiesFirst
-  W.spawn("DiesFirst", "F-5E-3", SX, 200, SZ + FAR)
-  check(dead.status == "DNF-died" and dead.pts == 11, "G DNF player not reset by re-slotting")
+  local d1b = W.spawn("DiesFirst", "F-5E-3", SX, 200, SZ + FAR)
+  W.advance(1)
+  check(dead.status == "racing" and dead.pts == 0, "G dead player racing again after re-slotting", dead.status .. "/" .. dead.pts)
+  check(W.msgsFor(d1b):find("All controls can be scored again", 1, true), "G dead player told", W.msgsFor(d1b))
+  local dz = W.spawn("DiesFirst", "F-5E-3", C2[1] - 3000, 200, C2[2])
+  W.set(dz, C2[1] - 125, 200, C2[2]); W.advance(1); W.set(dz, C2[1] + 125, 200, C2[2]); W.advance(1)
+  check(dead.pts == 11 and #dead.hitList == 1, "G control collected before death can be scored again", dead.pts)
   -- same unit re-registered by the roster poll is NOT a respawn
   W.advance(20)
   check(after.pts == 11 and (after.resets or 0) == 1, "G roster polling does not cause extra resets", after.resets)
