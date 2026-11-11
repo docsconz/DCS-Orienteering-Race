@@ -308,6 +308,15 @@ def ask(a, text):
             pass
 
 
+def extract_args(a):
+    out = []
+    for flag, val in (("--race-minutes", a.race_minutes), ("--penalty", a.penalty),
+                      ("--grace-minutes", a.grace_minutes)):
+        if val is not None:
+            out += [flag, str(val)]
+    return out
+
+
 def cmd_go(a):
     """Everything in one command: extract, capture (both passes), render, package."""
     src = a.source
@@ -319,7 +328,7 @@ def cmd_go(a):
         xdir = os.path.join(cache, "extract")
         print("Reading zones from %s ..." % src)
         r = subprocess.run([sys.executable, "-I", os.path.join(os.path.dirname(here), "extract.py"), src,
-                            "--out", xdir])
+                            "--out", xdir] + extract_args(a))
         if r.returncode != 0:
             sys.exit("extract.py found problems with the mission (see above) - fix them and run again")
         controls = os.path.join(xdir, "controls.json")
@@ -388,8 +397,9 @@ def cmd_go(a):
 
 def find_script(a, cache):
     """The race script to offer to embed: --script, else build/orienteering_race.lua, else the one extract just made."""
-    cands = [a.script] if a.script else [os.path.join("build", "orienteering_race.lua"),
-                                         os.path.join(cache, "extract", "orienteering_race.lua")]
+    fresh = os.path.join(cache, "extract", "orienteering_race.lua")      # just made by this run
+    old = os.path.join("build", "orienteering_race.lua")
+    cands = [a.script] if a.script else ([fresh, old] if a.source.lower().endswith(".miz") else [old, fresh])
     for c in cands:
         if c and os.path.exists(c):
             return os.path.abspath(c)
@@ -510,7 +520,10 @@ def main(argv=None):
     p.add_argument("--no-bake", action="store_true", help="never offer to add the pages to the .miz")
     p.add_argument("--trigger", action="store_true", help="add the MISSION START script trigger without asking")
     p.add_argument("--no-trigger", action="store_true", help="never offer the MISSION START script trigger")
-    p.add_argument("--script", help="the race script to embed (default: build/orienteering_race.lua)")
+    p.add_argument("--script", help="the race script to embed (default: the one made from the .miz in this run)")
+    p.add_argument("--race-minutes", type=float, help="race length in minutes (passed to extract.py; default 60)")
+    p.add_argument("--penalty", type=int, help="late penalty per started minute (passed to extract.py)")
+    p.add_argument("--grace-minutes", type=float, help="DQ unfinished players this long after the end (default 5)")
     add_pages(p)
     p.set_defaults(fn=cmd_go)
 
