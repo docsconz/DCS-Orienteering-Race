@@ -5,6 +5,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install Lua 5.1 (the version DCS embeds)
         run: sudo apt-get update && sudo apt-get install -y lua5.1
       - name: Tour solver tests
@@ -19,5 +22,5 @@ jobs:
         run: lua5.1 test/run_tests.lua build/race30/orienteering_race.lua build/mock_zones.lua build/dcs_test.log build/race8/orienteering_race.lua
       - name: Kneeboard tool tests (mock dcs-sms)
         run: |
-          pip install pillow numpy
+          python3 -m pip install pillow numpy
           python3 -I test/test_kneeboard.py
