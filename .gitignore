@@ -12,4 +12,5 @@ __pycache__/
 # keep the sample mission and its generated script; real event missions stay local
 *.miz
 !examples/*.miz
+!test/fixtures/*.miz
 .mock_state.json
