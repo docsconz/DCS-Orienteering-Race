@@ -477,12 +477,17 @@ class GoWithMiz(unittest.TestCase):
             cli = [sys.executable, "-I", os.path.join(KB, "kneeboard.py")]
             args = ["go", miz, "--cache", os.path.join(d, "cache"), "--render-dir", os.path.join(d, "render"),
                     "--settle", "0", "--again", "0.02", "--only", "00_overview", "--exe", "|".join(mock_cmd())]
-            # interactive: Enter at steps 1-3, then n to the trigger question and n to the kneeboard question
-            r = subprocess.run(cli + args, input="\n\n\nn\nn\n", capture_output=True, text=True, env=env, cwd=d)
+            # interactive: n to "change race settings", Enter at steps 1-3, then n to the trigger question
+            # and n to the kneeboard question
+            r = subprocess.run(cli + args, input="n\n\n\n\nn\nn\n", capture_output=True, text=True, env=env, cwd=d)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             out = os.path.join(d, "Race_kneeboards")
             self.assertTrue(os.path.exists(os.path.join(out, "00_overview.png")))
             self.assertLess(r.stdout.index("MISSION START trigger"), r.stdout.index("Also add the kneeboard pages"))
+            self.assertIn("Race script settings", r.stdout)
+            self.assertRegex(r.stdout, r"Race length \(minutes\)\s+60")
+            self.assertRegex(r.stdout, r"started minute late\)\s+8")
+            self.assertRegex(r.stdout, r"minutes\)\s+5\n")
             self.assertIn("The .miz was not changed", r.stdout)
             with zipfile.ZipFile(miz) as z:
                 self.assertNotIn("KNEEBOARD/IMAGES/00_overview.png", z.namelist())
@@ -498,6 +503,29 @@ class GoWithMiz(unittest.TestCase):
                 self.assertIn("KNEEBOARD/IMAGES/00_overview.png", z.namelist())
                 self.assertIn("l10n/DEFAULT/orienteering_race.lua", z.namelist())
                 self.assertEqual(len(X.parse_mission(z.read("mission").decode())["trigrules"]), 1)
+
+
+    def test_race_settings_can_be_changed(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as d:
+            env = dict(os.environ, MOCK_STATE=os.path.join(d, "state.json"))
+            miz = os.path.join(d, "Race.miz")
+            shutil.copyfile(os.path.join(os.path.dirname(HERE), "examples", "Orienteering_Test.miz"), miz)
+            cli = [sys.executable, "-I", os.path.join(KB, "kneeboard.py")]
+            cache = os.path.join(d, "cache")
+            args = ["go", miz, "--cache", cache, "--render-dir", os.path.join(d, "render"), "--penalty", "12",
+                    "--settle", "0", "--again", "0.02", "--only", "00_overview", "--exe", "|".join(mock_cmd())]
+            # y to change; bad value then 45 for minutes; Enter keeps the grace default (penalty came from the command line)
+            r = subprocess.run(cli + args, input="y\nabc\n45\n\n\n\n\nn\nn\n", capture_output=True, text=True,
+                               env=env, cwd=d)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("(from command line)", r.stdout)
+            self.assertIn("Please enter", r.stdout)
+            with open(os.path.join(cache, "extract", "orienteering_race.lua"), encoding="utf-8") as f:
+                lua = f.read()
+            self.assertRegex(lua, r"race_end_s\s*=\s*2700")
+            self.assertRegex(lua, r"penalty\s*=\s*12")
+            self.assertRegex(lua, r"hard_stop_grace_s\s*=\s*300")
 
 
 class EndToEnd(unittest.TestCase):

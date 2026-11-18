@@ -308,6 +308,48 @@ def ask(a, text):
             pass
 
 
+RACE_DEFAULTS = (("race_minutes", "Race length (minutes)", float, 60.0),
+                 ("penalty", "Late penalty (points per started minute late)", int, 8),
+                 ("grace_minutes", "Grace after the end before unfinished players are DQ (minutes)", float, 5.0))
+
+
+def _fmt(v):
+    return ("%g" % v)
+
+
+def race_settings(a):
+    """Show the values extract.py will use for the race script and let the user change them.
+    Values already given on the command line are kept; --yes (or no console) accepts everything."""
+    if a.yes or all(getattr(a, n) is not None for n, _, _, _ in RACE_DEFAULTS):
+        return
+    print("\nRace script settings (used by extract.py):")
+    for n, label, _, d in RACE_DEFAULTS:
+        v = getattr(a, n)
+        print("   %-78s %s%s" % (label, _fmt(d if v is None else v), "" if v is None else "  (from command line)"))
+    if not yes_no("Change any of these?"):
+        return
+    for n, label, typ, d in RACE_DEFAULTS:
+        if getattr(a, n) is not None:
+            continue
+        while True:
+            try:
+                r = input("   %s [%s]: " % (label, _fmt(d))).strip()
+            except EOFError:
+                r = ""
+            if r == "":
+                break
+            try:
+                v = typ(r)
+                if v < 0 or (n == "race_minutes" and v <= 0):
+                    raise ValueError
+            except ValueError:
+                print("   Please enter a %s number%s." % ("whole" if typ is int else "positive",
+                                                       "" if typ is int else ""))
+                continue
+            setattr(a, n, v)
+            break
+
+
 def extract_args(a):
     out = []
     for flag, val in (("--race-minutes", a.race_minutes), ("--penalty", a.penalty),
@@ -325,6 +367,7 @@ def cmd_go(a):
     os.makedirs(cache, exist_ok=True)
     if src.lower().endswith(".miz"):
         import subprocess
+        race_settings(a)
         xdir = os.path.join(cache, "extract")
         print("Reading zones from %s ..." % src)
         r = subprocess.run([sys.executable, "-I", os.path.join(os.path.dirname(here), "extract.py"), src,
